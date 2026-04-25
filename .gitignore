@@ -1,0 +1,12 @@
+.DS_Store
+favicon.ico
+.playwright-mcp/
+.Rhistory
+.RData
+.Rproj.user/
+__MACOSX/
+
+archive/
+outputs/
+data/derived/
+OASIS/images/

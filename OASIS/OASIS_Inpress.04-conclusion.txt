@@ -1,0 +1,389 @@
+Conclusion
+In this paper we have introduced the Open Affective Standardized Image Set (OASIS), an
+open-access online stimulus set containing color images normed on two affective dimensions,
+valence and arousal. OASIS offers four distinct advantages. First, it contains a large number of
+images spanning a wealth of different themes that cover much of circumplex space (including
+mid- to high-arousal images that are neutral on the valence dimension) and, unlike images from
+the International Affective Picture System (IAPS), have been assigned to four broad categories
+with large numbers of stimuli in each. Second, because OASIS ratings were obtained in 2015
+from a diverse sample of American adults, rather than an undergraduate sample, they offer a valid reflection of self-reported contemporary assessments of valence and arousal. Each image was
+rated by a relatively high number of participants (ranging from 101 to 108) and valence and
+arousal remained unconfounded because each participant provided ratings on only one dimension. Third, unencumbered by the copyright restrictions that apply to similar stimulus sets, such
+as the IAPS, OASIS images allow for free reuse and modification. Thus, they may be used freely
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+in both online and offline research studies. Finally, at http://www.benedekkurdi.com/#oasis we
+offer an online tool that enables users to freely download OASIS images along with normative
+valence and arousal ratings and to interactively explore them by category and by valence and
+arousal ratings. Our hope is that the OASIS stimulus set will prove to be a useful resource for
+researchers studying any aspect of affective responding in research studies conducted over the
+Internet or in the lab.
+
+25
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+26
+
+References
+Baglioni, C., Lombardo, C., Bux, E., Hansen, S., Salveta, C., Biello, S., et al. (2010). Psychophysiological reactivity to sleep-related emotional stimuli in primary insomnia. Behaviour
+Research and Therapy, 48(6), 467–475. http://doi.org/10.1016/j.brat.2010.01.008
+Banaji, M. R. (2001). Implicit Attitudes Can Be Measured. In H. L. Roediger III, J. S. Nairne, &
+I. Neath (Eds.), The Nature of Remembering: Essays in Honor of Robert G. Crowder (pp.
+117–149). Washington, D.C.: American Psychological Association.
+Barrett, L. F. (1998). Discrete Emotions or Dimensions? The Role of Valence Focus and Arousal
+Focus. Cognition & Emotion, 12(4), 579–599. http://doi.org/10.1080/026999398379574
+Berinsky, A. J., Huber, G. A., & Lenz, G. S. (2012). Evaluating Online Labor Markets for Experimental Research: Amazon.com’s Mechanical Turk. Political Analysis, 20(3), 351–368.
+http://doi.org/10.1093/pan/mpr057
+Bradley, M. M., & Lang, P. J. (1994). Measuring emotion: The self-assessment manikin and the
+semantic differential. Journal of Behavior Therapy and Experimental Psychiatry, 25(1), 49–
+59. http://doi.org/10.1016/0005-7916(94)90063-9
+Buchanan, T., Johnson, J. A., & Goldberg, L. R. (2005). Implementing a Five-Factor Personality
+Inventory for Use on the Internet. European Journal of Psychological Assessment, 21(2),
+115–127. http://doi.org/10.1027/1015-5759.21.2.115
+Buhrmester, M., Kwang, T., & Gosling, S. D. (2011). Amazon’s Mechanical Turk: A New
+Source of Inexpensive, Yet High-Quality, Data? Perspectives on Psychological Science,
+6(3), 3–5. http://doi.org/10.1177/1745691610393980
+Cacioppo, J. T., Berntson, G. G., Larsen, J. T., Poehlmann, K. M., & Ito, T. A. (2000). The psychophysiology of emotion. In M. Lewis & J. M. Haviland-Jones (Eds.), Handbook of emotions (2nd ed., pp. 173–191). New York, NY.
+Cohen, N., Henik, A., & Mor, N. (2011). Can Emotion Modulate Attention? Evidence for Reciprocal Links in the Attentional Network Test. Experimental Psychology, 58(3), 171–179.
+http://doi.org/10.1027/1618-3169/a000083
+Crowne, D. P., & Marlowe, D. (1960). A new scale of social desirability independent of psychopathology. Journal of Consulting Psychology, 24(4), 349–354.
+http://doi.org/10.1037/h0047358
+Dan-Glauser, E. S., & Scherer, K. R. (2011). The Geneva affective picture database (GAPED): a
+new 730-picture database focusing on valence and normative significance. Behavior Research Methods, 43(2), 468–477. http://doi.org/10.3758/s13428-011-0064-1
+Deák, A., Csenki, L., & Révész, G. (2010). Hungarian ratings for the International Affective Picture System (IAPS): A cross-cultural comparison. Empirical Text and Culture Research, (4),
+90–101.
+Delplanque, S., N’diaye, K., Scherer, K., & Grandjean, D. (2007). Spatial frequencies or emotional effects? Journal of Neuroscience Methods, 165(1), 144–150.
+http://doi.org/10.1016/j.jneumeth.2007.05.030
+Drace, S., Efendic, E., Kusturica, M., & Landzo, L. (2013). Cross-cultural validation of the “International Affective Picture System” (IAPS) on a sample from Bosnia and Herzegovina.
+Psihologija, 46(1), 17–26. http://doi.org/10.2298/PSI1301017D
+Dufey, M., Fernandez, A. M., & Mayol, R. (2011). Adding support to cross-cultural emotional
+assessment: Validation of the International Affective Picture System in a Chilean sample.
+Universitas Psychologica, 10(2), 521–533.
+Ekman, P. (1992). An argument for basic emotions. Cognition & Emotion, 6(3), 169–200.
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+27
+
+http://doi.org/10.1080/02699939208411068
+Fontaine, J. R. J., Scherer, K. R., Roesch, E. B., & Ellsworth, P. C. (2007). The World of Emotions is not Two-Dimensional. Psychological Science, 18(12), 1050–1057.
+http://doi.org/10.1111/j.1467-9280.2007.02024.x
+Frost, R. O., Tolin, D. F., Steketee, G., Fitch, K. E., & Selbo-Bruns, A. (2009). Excessive acquisition in hoarding. Journal of Anxiety Disorders, 23(5), 632–639.
+http://doi.org/10.1016/j.janxdis.2009.01.013
+Grühn, D., & Scheibe, S. (2008). Age-related differences in valence and arousal ratings of pictures from the International Affective Picture System (IAPS): Do ratings become more extreme with age? Behavior Research Methods, 40(2), 512–521.
+http://doi.org/10.3758/BRM.40.2.512
+Hajcak, G., & Dennis, T. A. (2009). Brain potentials during affective picture processing in children. Biological Psychology, 80(3), 333–338.
+http://doi.org/10.1016/j.biopsycho.2008.11.006
+Hodes, R. L., Cook, E. W., & Lang, P. J. (1985). Individual Differences in Autonomic Response:
+Conditioned Association or Conditioned Fear? Psychophysiology, 22(5), 545–560.
+http://doi.org/10.1111/j.1469-8986.1985.tb01649.x
+Huber, G. A., Hill, S. J., & Lenz, G. S. (2012). Sources of Bias in Retrospective Decision Making: Experimental Evidence on Voters’ Limitations in Controlling Incumbents. American
+Political Science Review, 106(04), 720–741. http://doi.org/10.1017/S0003055412000391
+Izard, C. E. (1992). Basic emotions, relations among emotions, and emotion–cognition relations.
+Psychological Review, 99(3), 561–565. http://doi.org/10.1037/0033-295X.99.3.561
+Krantz, J. H. (2015, July 22). Psychological Research on the Net. Retrieved July 22, 2015, from
+http://psych.hanover.edu/Research/exponnet.html
+Kraut, R. E., Olson, J. S., Banaji, M. R., Bruckman, A. S., Cohen, J. M., & Couper, M. P. (2004).
+Psychological Research Online: Report of Board of Scientific Affairs’ Advisory Group on
+the Conduct of Research on the Internet. American Psychologist, 59(2), 105–117.
+http://doi.org/10.1037/0003-066X.59.2.105
+Kuppens, P., Tuerlinckx, F., Russell, J. A., & Barrett, L. F. (2013). The relation between valence
+and arousal in subjective experience. Psychological Bulletin, 139(4), 917–940.
+http://doi.org/10.1037/a0030811
+Kveraga, K., Boshyan, J., Adams, R. B., Mote, J., Betz, N., Ward, N., et al. (2014). If it bleeds, it
+leads: separating threat from mere negativity. Social Cognitive and Affective Neuroscience,
+10(1), 28–35. http://doi.org/10.1093/scan/nsu007
+Lang, P. J. (1995). The emotion probe: Studies of motivation and attention. American Psychologist, 50(5), 372–385. http://doi.org/10.1037/0003-066X.50.5.372
+Lang, P. J., Bradley, M. M., & Cuthbert, B. N. (1990). Emotion, attention, and the startle reflex.
+Psychological Review, 97(3), 377–395. http://doi.org/10.1037/0033-295X.97.3.377
+Lang, P. J., Bradley, M. M., & Cuthbert, B. N. (2008). International affective picture system
+(IAPS): Affective ratings of pictures and instruction manual. Technical report A-8. Gainesville, FL.
+Lasaitis, C., Ribeiro, R. L., & Bueno, O. F. A. (2008). Brazilian norms for the International Affective Picture System (IAPS): comparison of the affective ratings for new stimuli between
+Brazilian and North-American subjects. Jornal Brasileiro De Psiquiatria, 57(4), 270–275.
+http://doi.org/10.1590/S0047-20852008000400008
+Libkuman, T. M., Otani, H., Kern, R., Viger, S. G., & Novak, N. (2007). Multidimensional nor-
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+28
+
+mative ratings for the International Affective Picture System. Behavior Research Methods,
+39(2), 326–334. http://doi.org/10.3758/BF03193164
+Lohani, M., Gupta, R., & Srinivasan, N. (2013). Cross-Cultural Evaluation of the International
+Affective Picture System on an Indian Sample. Psychological Studies, 58(3), 233–241.
+http://doi.org/10.1007/s12646-013-0196-8
+Lundqvist, D., Flykt, A., & Öhman, A. (1998). The Karolinska Directed Emotional Faces
+(KDEF). Solna, Sweden.
+Mason, W., & Suri, S. (2012). Conducting Behavioral Research on Amazon’s Mechanical Turk.
+Behavior Research Methods, 44(1), 1–23. http://doi.org/10.3758/s13428-011-0124-6
+Mikels, J. A., Fredrickson, B. L., Larkin, G. R., Lindberg, C. M., Maglio, S. J., & Reuter-Lorenz,
+P. A. (2005). Emotional category data on images from the international affective picture system. Behavior Research Methods, 37(4), 626–630. http://doi.org/10.3758/BF03192732
+Moll, J., Zahn, R., de Oliveira-Souza, R., Krueger, F., & Grafman, J. (2005). Opinion: The neural basis of human moral cognition. Nature Reviews Neuroscience, 6(10), 799–809.
+http://doi.org/10.1038/nrn1768
+Moriguchi, Y., Negreira, A., Weierich, M., Dautoff, R., Dickerson, B. C., Wright, C. I., & Barrett, L. F. (2011). Differential Hemodynamic Response in Affective Circuitry with Aging:
+An fMRI Study of Novelty, Valence, and Arousal. Journal of Cognitive Neuroscience,
+23(5), 1027–1041. http://doi.org/10.1162/jocn.2010.21527
+Nisbett, R. E., & Wilson, T. D. (1977). Telling more than we can know: Verbal reports on mental processes. Psychological Review, 84(3), 231–259. http://doi.org/10.1037//0033295X.84.3.231
+Nosek, B. A., Banaji, M. R., & Greenwald, A. G. (2002). Harvesting implicit group attitudes and
+beliefs from a demonstration web site. Group Dynamics: Theory, Research, and Practice,
+6(1), 101–115. http://doi.org/10.1037//1089-2699.6.1.101
+Paolacci, G., Chandler, J., & Ipeirotis, P. (2010). Running experiments on Amazon Mechanical
+Turk. Judgment and Decision Making, 5(5), 411–419.
+Paulhus, D. L. (1984). Two-component models of socially desirable responding. Journal of Personality and Social Psychology, 46(3), 598–609. http://doi.org/10.1037//0022-3514.46.3.598
+Payne, B. K., Cheng, C. M., Govorun, O., & Stewart, B. D. (2005). An inkblot for attitudes: Affect misattribution as implicit measurement. Journal of Personality and Social Psychology,
+89(3), 277–293. http://doi.org/10.1037/0022-3514.89.3.277
+Pequegnat, W., Rosser, B. R. S., Bowen, A. M., Bull, S. S., DiClemente, R. J., Bockting, W. O.,
+et al. (2006). Conducting Internet-Based HIV/STD Prevention Survey Research: Considerations in Design and Evaluation. AIDS and Behavior, 11(4), 505–521.
+http://doi.org/10.1007/s10461-006-9172-9
+Peterson, C., Park, N., & Seligman, M. E. P. (2005). Orientations to happiness and life satisfaction: the full life versus the empty life. Journal of Happiness Studies, 6(1), 25–41.
+http://doi.org/10.1007/s10902-004-1278-z
+Quigley, K. S., Lindquist, K. A., & Barrett, L. F. (2014). Inducing and measuring emotion and
+affect: Tips, tricks, and secrets. In H. T. Reis & C. M. Judd (Eds.), Handbook of Research
+Methods in Personality and Social Psychology. New York, NY.
+Rand, D. G. (2012). The promise of Mechanical Turk How online labor markets can help theorists run behavioral experiments. Journal of Theoretical Biology, 299(C), 172–179.
+http://doi.org/10.1016/j.jtbi.2011.03.004
+Russell, J. A. (1980). A circumplex model of affect. Journal of Personality and Social Psycholo-
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+29
+
+gy, 39(6), 1161–1178. http://doi.org/10.1037/h0077714
+Seo, M.-G., & Barrett, L. F. (2007). Being Emotional During Decision Making—Good or Bad?
+An Empirical Investigation. Academy of Management Journal, 50(4), 923–940.
+http://doi.org/10.5465/AMJ.2007.26279217
+Weierich, M. R., Wright, C. I., Negreira, A., Dickerson, B. C., & Barrett, L. F. (2010). Novelty
+as a dimension in the affective brain. NeuroImage, 49(3), 2871–2878.
+http://doi.org/10.1016/j.neuroimage.2009.09.047
+Wessa, M., & Flor, H. (2007). Failure of Extinction of Fear Responses in Posttraumatic Stress
+Disorder: Evidence From Second-Order Conditioning. American Journal of Psychiatry,
+164(11), 1684–1692. http://doi.org/10.1176/appi.ajp.2007.07030525
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+Figure 1. Distribution of some key demographic variables (race, ideological self-placement,
+highest educational attainment, and annual household income) in the sample.
+
+30
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+Figure 2. Univariate distribution of imagewise mean valence and arousal ratings (top row) and
+distribution of imagewise valence and arousal standard deviations (bottom row).
+
+31
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+32
+
+Figure 3. Relationship between imagewise valence means and imagewise valence standard deviations, with the best-fitting cubic regression line (left pane). Relationship between imagewise
+arousal means and imagewise arousal standard deviations, with the best-fitting quadratic regression line (right pane).
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+33
+
+Figure 4. Image ratings in circumplex space, with valence (measured on a 1–7 Likert scale) on
+the x-axis and arousal (also measured on a 1–7 Likert scale) on the y-axis.
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+34
+
+Figure 5. Image ratings in circumplex space, with valence (measured on a 1–7 Likert scale) on
+the x-axis and arousal (also measured on a 1–7 Likert scale) on the y-axis. The colors correspond
+to image categories.
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+35
+
+Appendix A—Image-focused instructions
+Screen
+
+Screen 1
+
+Screen 2
+
+Screen 3
+
+Valence
+Arousal
+Pictures communicate. They depict people, objects, and scenes. In this study, we
+are interested in how various pictures make people feel.
+As you answer, please remember:
+There are no right or wrong answers. We are interested in your individual
+opinion. Please do not take too long over any picture. Your first response is as
+good as any.
+We will ask you to rate a series of
+We will ask you to rate a series of
+pictures in terms of the amount of
+pictures in terms of how positive or
+emotion that they evoke. In other
+negative they are.
+words, we would like to know how
+If the picture represents something
+much emotional intensity the picture
+good or positive, please use the right
+creates; whether the picture captures
+side of the scale to mark your answer.
+something good or bad doesn’t matter.
+Positive images are those that represent
+We are interested only in the degree of
+things that make us happy, satisfied,
+excitement, energy, or intensity of
+competent, proud, contented,
+feeling it represents.
+delighted, and so on. It doesn’t matter
+Use the right side of the scale to mark
+what the specific picture is about, as
+your answer if the picture represents
+long as it represents something positive
+something that is strongly emotional.
+or good.
+The words that we might use to
+If the picture represents something bad
+describe the emotional state that the
+or negative, please use the left side of
+picture creates are aroused, alert, actithe scale to mark your answer.
+vated, charged, or energized.
+Negative images are those that
+Use the left side of the scale to mark
+represent things that make us unhappy,
+your answer if the picture represents
+upset, irritated, angry, sad, depressed,
+something that is not strongly
+and so on. It doesn’t matter what the
+emotional. The words that we might
+specific picture is about, as long as it is
+use to describe the emotional state that
+something negative or bad.
+the picture creates are unaroused, slow,
+Use the middle of the scale to indicate
+still, de-energized, calm, or peaceful.
+that the picture makes you feel neutral,
+Use the middle of the scale to indicate
+that is, that you think that the picture is
+an image that is moderately arousing
+neither positive nor negative.
+or halfway through the two extremes.
+Please use the full range of the scale to
+Please use the full range of the scale to
+make your responses rather than
+make your responses rather than
+relying on only a few points.
+relying on only a few points.
+When making your ratings, you need
+to forget about whether the picture is
+about something positive or negative,
+good or bad. Instead, we ask you to
+rate the picture only in terms of the
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+36
+
+emotional intensity that it evokes.
+For instance, you might have two
+pictures—one depicting an athlete
+winning a gold medal (something
+good) and another depicting an athlete
+getting injured and losing the race
+(something bad). You can give both
+images the same rating because they
+are both creating a similar level of
+emotion, even though the feelings are
+not the same. Your answers should be
+based only on how much emotional
+intensity the picture captures.
+Appendix B—Internal state-focused instructions
+Screen
+
+Screen 1
+
+Screen 2
+
+Valence
+Arousal
+Pictures communicate. They depict people, objects, and scenes. In this study, we
+are interested in how various pictures make people feel.
+As you answer, please remember:
+There are no right or wrong answers. We are interested in your individual
+opinion. Please do not take too long over any picture. Your first response is as
+good as any.
+We will ask you to rate a series of
+We will ask you to rate a series of
+pictures in terms of how positive or
+pictures in terms of how excited or
+negative they make you feel.
+aroused they make you feel. In other
+If the picture creates a positive feeling,
+words, we would like to know how
+please use the right side of the scale to
+intense the feeling is that the picture
+mark your answer. Positive feelings
+evokes; whether it is good or bad
+include feeling happy, satisfied,
+doesn’t matter.
+competent, proud, contented,
+Use the right side of the scale to mark
+delighted, and so on. It doesn’t matter
+your answer if the picture makes you
+what the specific feeling is, as long as
+feel emotionally aroused, alert,
+it is something positive.
+activated, charged, or energized.
+If the picture creates a negative feeling,
+Use the left side of the scale to mark
+please use the left side of the scale to
+your answer if the picture makes you
+mark your answer. Negative feelings
+feel no emotional arousal at all, that is,
+include feeling unhappy, upset,
+if it makes you feel unaroused, slow,
+irritated, angry, sad, depressed, and so
+still, de-energized, calm, or peaceful.
+on. It doesn’t matter what the specific
+Use the middle of the scale to indicate
+feeling is, as long as it is something
+that you are moderately aroused, that
+negative.
+is, halfway through the two extremes.
+Use the middle of the scale to indicate Please use the full range of the scale to
+that the picture makes you feel neutral,
+make your responses rather than
+that is, neither positive nor negative.
+relying on only a few points.
+
+Running head: OPEN AFFECTIVE STANDARDIZED IMAGE SET
+
+37
+
+Please use the full range of the scale to
+make your responses rather than
+relying on only a few points.
+
+Screen 3
+
+When making your ratings, you need
+to forget about whether the picture
+makes you feel good or bad. We ask
+you to rate the picture only in terms of
+emotional intensity and not in terms of
+goodness or badness.
+For instance, you might have two
+pictures—one depicting an athlete
+winning a gold medal (something
+good) and another depicting an athlete
+getting injured and losing the race
+(something bad). You can give both
+images the same rating because they
+are both creating a similar level of
+emotion, even though the feelings are
+not the same. Your answers should be
+based only on how much emotional
+intensity the picture creates.
+
+

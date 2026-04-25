@@ -1,0 +1,30 @@
+Conclusion
+In this article, we have introduced OASIS, an open-access
+online stimulus set containing color images normed on two
+affective dimensions, valence and arousal. OASIS offers
+four distinct advantages. First, it contains a large number
+of images spanning a wealth of different themes that cover
+much of circumplex space (including mid- to high-arousal
+images that are neutral on the valence dimension) and, unlike the images from IAPS, have been assigned to four broad
+categories with large numbers of stimuli in each. Second,
+because the OASIS ratings were obtained in 2015 from a
+diverse sample of American adults, rather than an under-
+
+467
+
+graduate sample, they offer a valid reflection of selfreported contemporary assessments of valence and arousal.
+Each image was rated by a relatively high number of participants (ranging from 101 to 108), and valence and arousal
+remained unconfounded because each participant provided
+ratings on only one dimension. Third, unencumbered by
+the copyright restrictions that apply to similar stimulus sets,
+such as the IAPS, the OASIS images allow for free reuse
+and modification. Thus, they may be used freely in both
+online and offline research studies. Finally, at www.
+benedekkurdi.com/#oasis we offer an online tool that
+enables users to freely download the OASIS images along
+with their normative valence and arousal ratings, and to
+interactively explore them by category and by valence and
+arousal ratings. Our hope is that the OASIS stimulus set will
+prove to be a useful resource for researchers studying any
+aspect of affective responding in research studies conducted
+over the Internet or in the lab.

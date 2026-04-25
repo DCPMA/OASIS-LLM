@@ -1,0 +1,26 @@
+Codebook for OASIS_data.csv
+---------------------------
+
+ID: 6-digit participant identifier
+
+Condition: Focus (image-centered vs. participant-centered) × dimension (valence vs. arousal)
+
+Gender: Participant gender (1 = Male, 2 = Female)
+
+Age: Participant age
+
+Ethnicity: Participant ethnicity (1 = Hispanic or Latino, 2 = Not Hispanic or Latino, 4 = Unknown)
+
+Race: Participant race (1 = American Indian/Alaska Native, 2 = East Asian, 3 = South Asian,
+						4 = Native Hawaiian or other Pacific Islander, 5 = Black or African American
+						6 = White, 7 = More than one race, 9 = Other or unknown)
+
+Ideol: Participant ideology (1 = Strongly conservative, 2 = Moderately conservative, 3 = Slightly conservative,
+							 4 = Neutral, middle of the road, 5 = Slightly liberal, 6 = Moderately liberal,
+							 7 = Strongly liberal, 9 = Don't know/Prefer not to answer)
+
+Income: Participant income (1 = below $25,000, 2 = $25,000 to $44,999, 3 = $50,000 to $69,999,
+							4 = $70,000 to $99,999, 5 = $100,000 or above, 7 = Don't know/Prefer not to answer)
+
+Education: Participant education (1 = Grade school/some high school, 2 = High school diploma,
+								  3 = Some college, no degree, 4 = College degree, 5 = Graduate degree)

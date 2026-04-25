@@ -1,0 +1,7 @@
+CORRECTION OF SEPTEMBER 26, 2017
+--------------------------------
+In the data file broken down by gender ("OASIS_bygender.csv") six columns were mislabeled:
+Columns H–J should have been labeled "Valence_mean_women", "Valence_SD_women", and "Valence_N_women."
+Columns K–M should have been labeled "Arousal_mean_men", "Arousal_SD_men", "Arousal_N_men."
+Instead, the labels for columns H–J and the labels for columns K–M were flipped.
+The column labels are accurate in the new version of the file named "OASIS_bygender_CORRECTED_092617.csv."

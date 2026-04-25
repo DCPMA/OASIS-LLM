@@ -1,0 +1,166 @@
+Method
+Participants
+The participants were recruited through Amazon’s
+Mechanical Turk (MTurk) to Brate images of everyday objects
+and scenes^ in exchange for $0.75. MTurk offers a participant
+pool that is more diverse than undergraduate samples
+(Berinsky et al., 2012; Buhrmester et al., 2011), such as the
+sample that provided normative ratings for the IAPS images
+(Lang et al., 2008). Moreover, it has been demonstrated repeatedly that studies conducted via MTurk offer valid and
+reliable data whose quality is comparable to that of data collected in lab studies (Buhrmester et al., 2011; Mason & Suri,
+2012; Paolacci et al., 2010; Rand, 2012). To make sure that
+participants were sufficiently attentive and motivated, we restricted participation to workers with an approval rate of at
+least 90 % on previous human intelligence tasks (HITs) completed on MTurk, and at least 50 HITs completed. Moreover,
+to prevent intercultural differences in terms of valence and
+arousal judgments or response styles from contaminating the
+results, the HIT was displayed only to workers from the
+United States. Potential participants received a disclaimer that
+they might find some of the images displayed in the study
+disturbing, due to Bsexually explicit, violent, or traumatic^
+content. The original target number for participants was 800;
+however, because some participants failed to submit their HIT
+on Amazon MTurk after completing the study, we ended up
+with usable data from 822 participants. On average, it took
+participants 25.13 min (SD = 6.68) to complete the study.
+The participants exhibited considerable variability in terms
+of age, gender, geographic location, and socioeconomic background. Participants’ ages ranged from 18 to 74 years, with a
+mean of 36.63 years (SD = 11.91). With 420 female and 398
+male participants, the gender distribution was balanced.
+Participants’ ideological self-placement, race, highest level
+of education, and household income also varied considerably
+
+Behav Res (2017) 49:457–470
+
+(see Fig. 1), although, relative to the national average, liberal,
+White, highly educated, and high-income participants were
+overrepresented in our sample, as they are in most online
+research studies (Berinsky et al., 2012). Detailed demographic
+data have not been reported for the participants who rated the
+original IAPS images. However, given that the IAPS images
+were rated exclusively by introductory psychology students
+(Lang et al., 2008), one can reasonably assume that the sample
+used in the present study was considerably more diverse in
+terms of age and socioeconomic background.
+Materials
+The 900 images included in the study were obtained from
+a variety of online sources, most notably Pixabay (https://
+pixabay.com/en/; N = 646) and Wikipedia (https://www.
+wikipedia.org; N = 172). The images were found using
+Google Images (https://images.google.com). We
+collected a broad range of images that we expected to
+cover the largest possible area in circumplex space. The
+image search was restricted to images labeled as being
+available for reuse with modification, thus ensuring that
+the images could be edited and redistributed without any
+restrictions and free of charge. We standardized the size of
+the images by scaling and/or cropping them to 500 ×
+400 pixels. The images were then randomly assigned to
+four lists containing 225 images each.
+Prior to the study, each image was placed into one of four
+mutually exclusive categories—animals, objects, people, and
+scenes. The images in the animal category (N = 134) depict
+various animals, including dogs, snakes, insects, birds, spiders, sharks, lions, monkeys, and cats. The images in the
+objects category (N = 200) depict a wide range of objects,
+including human-made objects such as fences, jewelry, cars,
+bottles, and balls of yarn, and natural objects such as leaves,
+rocks, pebbles, and flowers. The images in the people category (N = 346) depict humans alone, in dyads, and in groups
+in various situations of daily life. The images in the scenes
+category (N = 220) depict urban and rural spaces, as well as
+weather phenomena such as lightning or earthquakes. It
+should be noted that the category assignments were made
+by the first and second authors and had no basis in empirical
+measurement. They serve merely to facilitate the use of the
+stimulus set.
+Procedure
+Prestudy We considered whether to instruct participants to
+focus on the valence and intensity of each image or to ask
+about the feelings that each image evoked in them. We
+thus created two sets of instructions: image-focused instructions asking participants to indicate the level of valence or arousal intrinsic to each image, and internal
+
+459
+
+state-focused instructions asking participants to indicate
+the level of valence and arousal that each image has
+evoked in them2 (Quigley et al., 2014). To determine
+whether these two sets of instructions led to different assessments, and if so, in what way, we conducted a
+prestudy with 184 participants, also recruited from
+Amazon MTurk.
+Participants were randomly assigned to one of the two
+sets of instructions (see Appendixes 1 and 2) and to either
+the valence or the arousal dimension. We tested the effects
+of the instruction manipulation on the valence and arousal
+ratings by fitting a mixed-effects linear regression to the
+data, with random intercepts for images and participants,
+and a fixed effect for instruction focus (image-focused vs.
+internal state-focused). No significant effect of instruction
+focus was found, t(90) = 0.789, p = .432, suggesting that
+participants rated the images similarly irrespective of
+whether they had been assigned to the image-focused or
+the internal state-focused instruction condition. Therefore,
+in the main study, we dropped this manipulation and used
+only the image-focused instructions.
+Main study The 900 images were randomly assigned to four
+lists of 225 images each. Each list was tested in a separate
+study. Four lists were created in order to prevent participant
+fatigue. Using a mixed-effects model including random effects for participants and images and a fixed effect for list,
+we found that ratings did not differ across the lists, χ2(3) =
+1.01, p = .798. Therefore, all results are reported by collapsing
+across lists. To avoid contamination between the two dimensions of valence and arousal (Bishop, Oldendick, &
+Tuchfarber, 1984; Lau, Sears, & Jessor, 1990; Schuman,
+Kalton, & Ludwig, 1983; Wilcox & Wlezien, 1993), each
+participant was randomly assigned to rate the images on only
+the valence or only the arousal dimension. First, participants
+received a general description of the study (Screen 1) and
+detailed instructions on the meaning of the dimension that
+they would be asked to rate (Screen 2; for the full set of
+instructions, see Appendix 1). We expected that the meaning
+of the valence dimension might be more intuitively clear to
+participants than the meaning of the arousal dimension. To
+prevent the valence dimension from interfering with judgments of arousal, the participants in the arousal condition received an additional set of instructions (Screen 3) explaining
+the difference between valence and arousal and the orthogonal
+nature of the two dimensions.
+After reading the instructions, participants were presented
+with the 225 images in an individually randomized order and
+were asked to rate the images using a 7-point Likert scale.
+2
+The IAPS is based on internal state-focused instructions. For instance,
+the arousal instructions say, B[a]t one extreme of the scale you felt stimulated, excited, frenzied, jittery, wide-awake, aroused^ (Lang et al., 2008).
+
+460
+
+Behav Res (2017) 49:457–470
+
+Fig. 1 Distributions of some key demographic variables (race, ideological self-placement, highest educational attainment, and annual household
+income) in the sample
+
+Even though the IAPS images were originally normed using a
+so-called Self-Assessment Manikin (SAM; Hodes, Cook, &
+Lang, 1985) rather than a verbal scale, it has been shown that,
+at least for the valence and arousal dimensions assessed in the
+present study, SAM and corresponding verbal scales are very
+highly correlated (Bradley & Lang, 1994). Each image was
+displayed in a size of 500 × 400 pixels on a separate screen,
+and the rating scale was placed below the image. For the valence dimension, the word Valence was displayed above the
+rating scale and the points of the scale were labeled as Very
+negative, Moderately negative, Somewhat negative, Neutral,
+Somewhat positive, Moderately positive, and Very positive.
+For the arousal dimension, the word Arousal was displayed
+above the rating scale and the points of the scale were labeled
+as Very low, Moderately low, Somewhat low, Neither low nor
+high, Somewhat high, Moderately high, and Very high.
+Valence and arousal are technical terms; however, they
+were used as labels because their meanings were clearly explained to participants in the instructions and we did not want
+to impose any new, potentially misleading, labels on the
+scales. After rating each image, participants clicked a button
+to proceed to the next screen. The survey was set up to proceed in a forward only direction; that is, participants were not
+allowed to return to previous screens.
+After providing ratings for all 225 images, participants
+were asked to complete a standard demographic questionnaire
+including items on gender, age, ethnicity, race, ideological
+self-placement, annual household income, highest educational
+attainment, current ZIP code, and ZIP code where they had
+
+lived longest. On the following screen, participants received a
+6-digit code with which they were able to claim compensation
+on Amazon MTurk. On the last screen of the study, participants were thanked and debriefed.
+
