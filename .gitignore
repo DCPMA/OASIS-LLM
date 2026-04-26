@@ -1,4 +1,5 @@
 .DS_Store
+**/.DS_Store
 favicon.ico
 .playwright-mcp/
 .Rhistory
@@ -12,11 +13,20 @@ data/derived/
 OASIS/images/
 data/llm_runs.duckdb
 data/llm_runs.duckdb.wal
+data/snapshot.duckdb
 data/derived/captions.parquet
 .venv/
 __pycache__/
 *.egg-info/
 .env
+.streamlit/secrets.toml
 
 data/logs/
 export/
+
+# data/public/ is intentionally tracked — bundles for the public results viewer.
+!data/public/
+!data/public/*.zip
+!data/public/README.md
+
+leaks.json

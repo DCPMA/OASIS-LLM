@@ -1,0 +1,114 @@
+---
+title: "Discoveries — methodology"
+description: "How we investigate, document, and ship fixes when reality contradicts expectations in the OASIS-LLM harness."
+---
+
+## Abstract
+
+The pages in this group are not reference documentation. They are **post-hoc
+research notes** for the non-trivial things this harness has run into:
+reasoning-capture failures on Gemma 4, the cost-estimation rewrite, the
+Ollama three-bug stack. Each one started with a contradiction between an
+expected behaviour and an observed one, and ended with either a code change,
+an operational workaround, or both.
+
+This preface page describes the protocol we used. It is short on purpose —
+the value is in the sagas themselves, not in the meta-process.
+
+## Protocol
+
+### 1. Reproduce, then narrow
+
+A bug we cannot reproduce is a bug we cannot fix. Before any code change we
+require a deterministic repro: the exact config, the exact model, the exact
+log line. This is why every saga page opens with **The symptom** — quoted log
+output or a numerical anomaly with timestamps — rather than with a hypothesis.
+
+### 2. Read the primary source
+
+When the failure involves an upstream component (LiteLLM, Ollama, OpenRouter,
+DuckDB) we read its issue tracker before forming a theory. Each saga cites
+the upstream issues we relied on by number. Two-thirds of the time the
+problem we are debugging is already filed and partially diagnosed by
+somebody with a better repro than ours.
+
+### 3. Contradict the obvious explanation
+
+The first plausible-sounding theory is usually wrong. The Ollama investigation
+opens with a "cold-start latency" theory that the data immediately falsified
+(see [Ollama operations](/ollama-operations#why-the-cold-start-theory-is-wrong)).
+We keep the dead ends in the document. Future readers should be able to
+follow the same path of elimination instead of just landing at the answer.
+
+### 4. Quantify
+
+Every claim in these sagas is paired with a number drawn from a real run, a
+real log, or a real benchmark — not an invented example. Where calibration
+matters, we cite the sample size (e.g. `n=10,598 trials`) and the dispersion
+(`σ=51`), not just the mean. This is the difference between
+"the model is slow" and
+"`gemma4:e4b` p95 was 6.1s on n=6,133 trials, then degraded to >60s after
+17:58 once memory pressure crossed an inflection point."
+
+### 5. Ship the smallest correct fix
+
+Where possible the implemented fix is one of:
+
+- **A code change** — the smallest diff that repairs the contract the upstream
+  component breaks. Counter-examples (large rewrites that "would also fix
+  unrelated things") are explicitly rejected.
+- **An operational workaround** — an environment variable, a kill command, a
+  config flag — when the upstream component is the right thing to fix but we
+  do not own that code. We document the workaround **and** the upstream tracker
+  so it can be retired later.
+- **A documentation change** — when the failure is a foot-gun rather than a
+  defect, surfacing it in the docs is the correct fix.
+
+We list what was deliberately **not** done at the end of each saga. Future
+readers should not have to reverse-engineer the choice.
+
+### 6. Make the fix self-documenting
+
+Each saga ends with two sections:
+
+- **Reproducing the diagnostic** — the commands a future maintainer should
+  run when they see the same symptom for the first time.
+- **References** — the upstream issues, the relevant source modules, the SQL
+  queries we used.
+
+If a fix requires a magic environment variable or an obscure terminal
+command, the saga is the canonical place to find it. The reference pages
+(`configuration`, `quickstart`, etc.) link back here rather than duplicating
+the explanation.
+
+## What lives in this group
+
+<CardGroup cols={2}>
+  <Card title="Reasoning capture" icon="brain" href="/reasoning-capture">
+    The Gemma 4 saga: required-schema reasoning broke smaller models, and the
+    prompt-rewrite fix that ships today.
+  </Card>
+  <Card title="Cost estimation" icon="calculator" href="/cost-estimation-saga">
+    Why the empirical-first cost model (Phase 4a) was abandoned in favour of
+    calibrated tokens × live OpenRouter pricing (Phase 4b).
+  </Card>
+  <Card title="Ollama operations" icon="server" href="/ollama-operations">
+    The 60s-timeout investigation: a "Stopping…" deadlock, macOS unified-memory
+    pressure, and a confirmed Flash Attention bug stacked together.
+  </Card>
+  <Card title="Cache buster" icon="dice" href="/cache-buster">
+    Per-sample salts that force decoding variance at `temperature=0` without
+    invalidating prefix caching.
+  </Card>
+</CardGroup>
+
+## What does **not** belong here
+
+- Configuration knobs and their defaults — those live in
+  [Configuration](/configuration).
+- Step-by-step usage instructions — those live in [Quickstart](/quickstart).
+- Trial-schema and runner-state reference — those live in [Workflow](/workflow).
+
+Discovery pages cite reference pages, not the other way around. This keeps the
+reference docs short and stable while giving the sagas room to be specific
+about what they actually saw.

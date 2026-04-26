@@ -36,18 +36,21 @@
           },
           {
             "group": "Analysis",
-            "pages": [
-              "analysis-vs-human"
-            ]
+            "pages": ["analysis-vs-human"]
           },
           {
             "group": "Implementation",
+            "pages": ["workflow", "configuration"]
+          },
+          {
+            "group": "Discoveries",
             "pages": [
-              "workflow",
-              "configuration",
+              "discoveries-methodology",
               "reasoning-capture",
-              "cache-buster",
-              "deployment"
+              "deployment",
+              "cost-estimation-saga",
+              "ollama-operations",
+              "cache-buster"
             ]
           },
           {

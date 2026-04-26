@@ -1,0 +1,359 @@
+---
+title: "Ollama operations"
+description: "A 60-second-timeout investigation that uncovered three stacked bugs: a 'Stopping…' deadlock, macOS unified-memory pressure, and a confirmed Flash Attention defect on Gemma 4."
+---
+
+## Abstract
+
+On a single afternoon, an Ollama-backed run that had been completing trials
+in 4–8 seconds for hours degraded to back-to-back 60-second timeouts. The
+naive explanation — "the model is slow" — was wrong: the same model on
+the same hardware had completed 6,133 prior trials at p95 ≈ 6.1 seconds and
+continued to _report_ 100% GPU utilisation in `ollama ps`. Diagnostic work
+identified three independent defects stacked on top of each other:
+
+1. **A `Stopping…` deadlock** in the Ollama runner process, triggered when
+   a soft eviction request races an in-flight inference.
+2. **macOS unified-memory pressure** that crossed an inflection point after
+   roughly 12,000 trials, forcing the Metal compute graph into swap-backed
+   memory.
+3. **A confirmed upstream defect** in Ollama's Flash Attention path on Gemma
+   3 / 4 (Apple Silicon), which silently spills the compute graph from GPU
+   to CPU despite `ollama ps` continuing to report `100% GPU`.
+
+This page reconstructs the investigation, documents the operational
+workarounds that recover a healthy state, and lists the implementation
+work that has **not** yet been done in `runner.py`.
+
+## The symptom
+
+A run that had been healthy all morning began producing log entries like:
+
+```text
+2025-11-XX 17:58:01 trial 12455 timed out after 1m0s (litellm.Timeout)
+2025-11-XX 17:58:14 trial 12456 timed out after 1m0s (litellm.Timeout)
+2025-11-XX 17:58:27 trial 12457 timed out after 1m0s (litellm.Timeout)
+…
+2025-11-XX 18:04:09 trial 12728 timed out after 1m0s (litellm.Timeout)
+```
+
+273 trials timed out within six minutes. A single subsequent trial completed
+in 248,239 ms — a >40× slowdown from the day's running mean. The retry-and-
+evict path in `_worker` activated (see
+[runner.py](src/oasis_llm/runner.py)), the runner posted `keep_alive=0` to
+the Ollama API, and the inference process appeared to obey: `ollama ps`
+reported `Stopping…`.
+
+Twenty minutes later, `ollama ps` still reported `Stopping…`. The runner
+process (PID 52053) was using 99.7% CPU and 10.6 GB RSS. No new trials
+landed.
+
+By the day's totals: **12,454 successful trials, 376 failed**, with the
+failures concentrated in a six-minute window after seven hours of healthy
+operation.
+
+## Methodology
+
+### 1. Timeline reconstruction
+
+The first investigative step was correlating timestamps across three log
+sources:
+
+- The OASIS-LLM runner's per-trial log
+- `~/.ollama/logs/server.log`
+- `vm_stat` and `ps` snapshots taken every minute via `cron`
+
+The runner log gave a clean before/after boundary:
+
+| Time          | Latency p50 | Latency p95 | Failure rate |
+| ------------- | ----------: | ----------: | -----------: |
+| 09:00 – 17:42 |       4.1 s |       6.1 s |        0.05% |
+| 17:58 – 18:04 | (timed out) |        60 s |         ~98% |
+
+The same model (`gemma4:e4b`, blob `c6eb396dbd59`, identical to
+`gemma4:latest`) handled 6,133 trials before 17:42 with no anomaly.
+
+### 2. Process inspection
+
+`ps -axm -o pid,rss,pcpu,command | grep ollama` showed two relevant
+processes:
+
+```
+ollama runner             PID 52053   RSS 10.6 GB   CPU 99.7%
+ollama serve              PID 52001   RSS 0.4  GB   CPU  0.1%
+```
+
+The runner process is the one that owns the loaded model weights and the
+Metal compute graph. With the model in `Stopping…` state and no inference
+requests pending, a CPU pegged at 99.7% indicates a busy-loop, not
+"finishing the current request" behaviour. The 10.6 GB RSS is consistent
+with the e4b weights still resident.
+
+### 3. Why the cold-start theory is wrong
+
+The first plausible-sounding hypothesis was that the model had been evicted
+between 17:42 and 17:58 and was paying re-load cost on every trial. Two
+data points falsified this within minutes:
+
+- `ollama ps` continued to list `gemma4:e4b` as **loaded** throughout the
+  failure window, with `100% GPU` and no `Stopping…` flag yet.
+- `~/.ollama/logs/server.log` shows the vision encoder running in 17 ms on
+  every failed trial. Encoder timing is sensitive to whether weights are
+  resident; 17 ms means the model was warm.
+
+So the model was loaded **and** the encoder was running — the timeouts
+were happening in the generation phase of an otherwise-warm model. That
+is not what cold start looks like.
+
+### 4. Memory-pressure measurement
+
+`vm_stat` snapshots told the actual story:
+
+```text
+17:00     Pages free:     2,103,449   Swapouts:    0
+17:30     Pages free:     1,220,118   Swapouts:    0
+17:45     Pages free:       412,302   Swapouts:   42,118
+18:00     Pages free:        58,402   Swapouts:  504,282
+18:15     Pages free:        58,011   Swapouts:  837,610
+                                       Pages purged:  1,988,377
+```
+
+By 18:00, **228 MB of 51.5 GB was free** and the system had performed
+half a million swap-out operations. On macOS unified memory, the Metal
+compute graph and the model weights are two different mappings of the
+same physical pages — once the system starts paging out under pressure,
+inference touches pages that are no longer resident and stalls behind
+disk I/O. This is consistent with the observation that the encoder ran
+fast (its working set is small) but generation, which streams through the
+KV cache, ran arbitrarily slowly.
+
+The _gradient_ matters more than the snapshot. Pages-free dropped two
+orders of magnitude across the failure window; swapouts went from 0 to
+500,000 in fifteen minutes. The system did not run out of memory at 09:00
+— it ran out of memory after seven hours of accumulating pressure.
+
+### 5. Upstream-issue cross-reference
+
+A search of the Ollama issue tracker for `gemma 4 flash attention apple
+silicon` returned four issues that match our symptoms closely:
+
+- [ollama/ollama #15237](https://github.com/ollama/ollama/issues/15237) —
+  Gemma 3 / 4 produces garbage output on Apple Silicon when
+  `OLLAMA_FLASH_ATTENTION=1`. Confirmed M-series only.
+- [ollama/ollama #15258](https://github.com/ollama/ollama/issues/15258) —
+  M4-specific reproduction of #15237.
+- [ollama/ollama #15368](https://github.com/ollama/ollama/issues/15368) —
+  Flash Attention path silently spills to CPU for Gemma-family models on
+  some Metal builds; `ollama ps` continues to report `100% GPU`.
+- [ollama/ollama #15350](https://github.com/ollama/ollama/issues/15350) —
+  3–5× speedup reported by users who set `OLLAMA_FLASH_ATTENTION=0`.
+
+PR [#15378](https://github.com/ollama/ollama/pull/15378) (released in
+v0.20.4) addressed part of #15237 but did not close #15368. Issue
+[#15634](https://github.com/ollama/ollama/issues/15634) is open as of the
+investigation date and tracks the unresolved CPU-spill case on Apple
+Silicon.
+
+## Findings
+
+The three defects above are independent and stack:
+
+<Steps>
+  <Step title="Bug 1 — &quot;Stopping…&quot; deadlock">
+    `_evict_ollama_model` in [runner.py](src/oasis_llm/runner.py) requests
+    eviction by `POST`-ing `keep_alive=0` to the Ollama API. This is a
+    **soft** eviction — it tells the runner to unload after the current
+    request finishes. If the current request is itself stuck (because of
+    Bug 2 or Bug 3), the runner enters a `Stopping…` state from which it
+    never returns.
+
+    Symptoms: `ollama ps` reports `Stopping…` indefinitely. Runner PID
+    pegged at ~99% CPU. New requests queue but do not start. The harness's
+    own retry path then times out against the same stuck runner because
+    the API endpoint is up and accepts new connections.
+
+  </Step>
+
+  <Step title="Bug 2 — macOS unified-memory pressure">
+    With ~50 GB physical RAM on an M-series machine, a multi-GB model
+    plus Streamlit dashboard plus DuckDB plus normal desktop processes
+    fits comfortably for hours. After 12,000+ trials the system hits a
+    pressure threshold where the Metal compute graph starts touching
+    swapped pages. Inference latency degrades from seconds to tens of
+    seconds, which trips the harness's 60-second `request_timeout_s`.
+
+    The `vm_stat` evidence above shows the inflection point clearly. This
+    is not specific to Ollama — anything sharing unified memory with the
+    runner process contributes — but the runner's RSS of 10.6 GB is the
+    largest single contributor.
+
+  </Step>
+
+  <Step title="Bug 3 — Flash Attention on Gemma 4 (upstream)">
+    With `OLLAMA_FLASH_ATTENTION=1` (the default in current Ollama builds),
+    Gemma 4 silently runs its compute graph on the CPU on some M-series
+    Metal builds, despite `ollama ps` continuing to report `100% GPU`.
+    Users in #15350 report **3–5× speedup** by setting
+    `OLLAMA_FLASH_ATTENTION=0`.
+
+    This bug interacts multiplicatively with Bug 2: a CPU-spilled compute
+    graph is far more memory-bandwidth-sensitive than a GPU graph, so the
+    point at which memory pressure becomes a problem is much earlier than
+    it would be on a healthy GPU path.
+
+  </Step>
+</Steps>
+
+### Why morning-fine and afternoon-broken makes sense
+
+The initial reaction was that a code change must have regressed somewhere
+between 17:42 and 17:58. There was no such change. The runner started the
+day with Flash Attention enabled (Bug 3 latent) and ran for seven hours
+because the available memory absorbed the elevated CPU/GPU traffic. As
+trials accumulated, memory pressure (Bug 2) crossed an inflection point.
+The first 60-second timeout triggered the eviction path, which raced an
+in-flight stalled inference and produced the deadlock (Bug 1). After that,
+every retry hit the deadlocked runner and timed out.
+
+Fixing any one of the three would not have prevented the failure. Fixing
+Bug 3 (set `OLLAMA_FLASH_ATTENTION=0`) makes Bug 2 much less likely to
+trigger. Fixing Bug 1 (hard-kill the runner on `Stopping…`) makes Bug 2
+recoverable instead of terminal. Fixing Bug 2 alone is hardest because we
+do not control the macOS memory manager.
+
+## Operational workarounds
+
+These are the commands a maintainer should run **today** if the same
+symptom appears.
+
+### Disable Flash Attention for Ollama
+
+```bash
+launchctl setenv OLLAMA_FLASH_ATTENTION 0
+osascript -e 'quit app "Ollama"'
+open -a Ollama
+```
+
+This survives reboot. Verify with:
+
+```bash
+ps -E -p $(pgrep -f 'ollama serve') | tr ' ' '\n' | grep FLASH
+# OLLAMA_FLASH_ATTENTION=0
+```
+
+### Recover from a `Stopping…` deadlock
+
+```bash
+# 1. Identify the stuck runner (the one with high RSS, not `ollama serve`)
+ps -axm -o pid,rss,pcpu,command | grep '[o]llama runner'
+
+# 2. Hard-kill it; `ollama serve` will respawn a fresh runner on next call
+kill -9 <PID>
+
+# 3. Confirm it is gone
+ollama ps   # should be empty or omit the formerly-stuck model
+```
+
+This is safe: the OASIS runner already has retry logic, so trials that were
+in flight at the moment of the kill will be retried automatically.
+
+### Reduce concurrency on Ollama runs
+
+`max_concurrency: 1` is the safest setting for Ollama-backed runs on
+M-series hardware. The throughput gain from concurrency on a single GPU is
+small (Ollama serialises Metal kernel launches anyway) and the memory cost
+is multiplicative.
+
+### Pre-flight memory check
+
+Before a long Ollama run, verify there is headroom:
+
+```bash
+vm_stat | awk '/Pages free/ {print $3 * 4096 / 1024 / 1024, "MB free"}'
+```
+
+A long run on `gemma4:e4b` should not start with less than ~8 GB free.
+
+## Implementation reference
+
+| Module / symbol                                                 | Behaviour                                                                                                        |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [runner.py — `_call_model`](src/oasis_llm/runner.py)            | Passes `timeout=cfg.request_timeout_s` (default 60s) to LiteLLM.                                                 |
+| [runner.py — `_evict_ollama_model`](src/oasis_llm/runner.py)    | Posts `keep_alive=0` to `/api/generate`. **Soft eviction**: cannot kill in-flight requests.                      |
+| [runner.py — `_is_stall_error`](src/oasis_llm/runner.py)        | Pattern-matches `litellm.Timeout` and `APIConnectionError` to decide whether a failure is stall-shaped.          |
+| [runner.py — `_worker`](src/oasis_llm/runner.py)                | Retry-and-evict state machine. Triggers `_evict_ollama_model` after `ollama_evict_threshold` consecutive stalls. |
+| [config.py — `request_timeout_s`](src/oasis_llm/config.py)      | Default 60 s. Lowering this catches Bug 2 earlier; raising it does not help Bug 1.                               |
+| [config.py — `ollama_evict_threshold`](src/oasis_llm/config.py) | Default 3 consecutive stalls.                                                                                    |
+
+## What is **not** yet implemented
+
+We deliberately have not landed code for the following — operational
+workarounds are sufficient for now and any of these involves trade-offs
+the team has not signed off on.
+
+- **Hard-kill on `Stopping…`.** A version of `_evict_ollama_model` that,
+  after issuing the soft eviction, polls `ollama ps`, and on detecting
+  `Stopping…` for >N seconds calls `kill -9` on the runner PID. This is
+  the closest fix to Bug 1 but introduces a hard dependency on parsing
+  `ollama ps` output, which is undocumented and has changed format twice.
+- **Memory-pressure preflight.** A check at run start that fails fast if
+  `vm_stat` reports < N GB free. Trade-off: false positives on machines
+  with effective swap.
+- **Periodic memory-pressure checkpoint.** Inject a `vm_stat` read between
+  trials and pause the run if pressure crosses a threshold. Trade-off:
+  adds latency to a hot path that is already not free.
+- **Auto-set `OLLAMA_FLASH_ATTENTION=0` on launch.** The harness could
+  refuse to start an Ollama run when it detects `OLLAMA_FLASH_ATTENTION=1`
+  on Apple Silicon. We did not ship this because the upstream bug may be
+  closed in a future Ollama release and the harness should not pin a
+  workaround past its useful life.
+
+## Reproducing the diagnostic
+
+If a future run shows the same symptom, the following sequence rebuilds
+the evidence in this page:
+
+```bash
+# 1. Confirm the symptom: timeouts clustered in time, runner pegged
+grep "timed out after" runner.log | tail -50
+
+# 2. Inspect the runner state
+ollama ps
+ps -axm -o pid,rss,pcpu,command | grep '[o]llama'
+
+# 3. Memory pressure
+vm_stat | sed -n '1,12p'
+sysctl vm.swapusage
+
+# 4. Flash Attention setting
+ps -E -p $(pgrep -f 'ollama serve') | tr ' ' '\n' | grep FLASH
+
+# 5. Encoder vs generation timing in the Ollama log
+grep -E '(image-encoder|generate)' ~/.ollama/logs/server.log | tail -50
+```
+
+If steps 1–3 show timeouts plus high RSS plus low free pages, you are
+looking at Bug 2 (and likely Bug 1 as a downstream consequence). If step 4
+shows `OLLAMA_FLASH_ATTENTION=1`, you are also looking at Bug 3 — set it
+to 0 and restart Ollama before debugging further.
+
+## References
+
+### Upstream issues
+
+- [#15237 — Gemma 3/4 garbage output with Flash Attention on Apple Silicon](https://github.com/ollama/ollama/issues/15237)
+- [#15258 — M4 reproduction of #15237](https://github.com/ollama/ollama/issues/15258)
+- [#15368 — Flash Attention silently spills to CPU; `ollama ps` reports 100% GPU](https://github.com/ollama/ollama/issues/15368)
+- [#15350 — 3–5× speedup with `OLLAMA_FLASH_ATTENTION=0`](https://github.com/ollama/ollama/issues/15350)
+- [#15378 — Partial fix in Ollama v0.20.4](https://github.com/ollama/ollama/pull/15378)
+- [#15634 — Open: unresolved CPU-spill on Apple Silicon](https://github.com/ollama/ollama/issues/15634)
+
+### Internal sources
+
+- [src/oasis_llm/runner.py](src/oasis_llm/runner.py) — `_call_model`,
+  `_evict_ollama_model`, `_is_stall_error`, `_worker`
+- [src/oasis_llm/config.py](src/oasis_llm/config.py) — `request_timeout_s`,
+  `ollama_evict_threshold`
+- `~/.ollama/logs/server.log` — encoder vs generate timing per trial
+- `data/llm_runs.duckdb` — trial table; query `failures_by_minute` to
+  reproduce the failure-window timeline

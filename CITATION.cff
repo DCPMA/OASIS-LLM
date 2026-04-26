@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "OASIS-LLM: Adapting OASIS to Run with LLM Agents"
+abstract: >-
+  A research harness that adapts the OASIS image-norming procedure
+  (Kurdi, Lozano, & Banaji, 2017) to vision-language model "agents",
+  measuring how contemporary LLMs rate affective images on
+  valence and arousal dimensions and comparing the results to the
+  human MTurk norms.
+authors:
+  - family-names: Wong
+    given-names: Desmond
+repository-code: "https://github.com/DCPMA/AI-Psy"
+url: "https://github.com/DCPMA/AI-Psy"
+license: MIT
+version: "0.1.0"
+date-released: 2025-11-22
+keywords:
+  - affective computing
+  - vision-language models
+  - psychology
+  - replication
+  - OASIS
+preferred-citation:
+  type: article
+  title: >-
+    Introducing the Open Affective Standardized Image Set (OASIS)
+  authors:
+    - family-names: Kurdi
+      given-names: Benedek
+    - family-names: Lozano
+      given-names: Shayn
+    - family-names: Banaji
+      given-names: Mahzarin R.
+  journal: "Behavior Research Methods"
+  year: 2017
+  volume: 49
+  issue: 2
+  start: 457
+  end: 470
+  doi: "10.3758/s13428-016-0715-3"

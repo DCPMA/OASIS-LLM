@@ -1,0 +1,246 @@
+---
+title: "Cost estimation"
+description: "Why the empirical-first cost model was abandoned in favour of calibrated tokens × live OpenRouter pricing, with the calibration data from n=10,598 trials."
+---
+
+## Abstract
+
+Pre-launch cost estimation in the Experiments page exists to answer a single
+question: **how much will this run cost before I press start?** The first
+implementation tried to answer it from each project's accumulated trial
+history. That approach was abandoned after one iteration because it
+penalised new installs and degraded gracefully into a hand-tuned 1500/150
+token fallback that systematically over-quoted by 3–5×. The current
+implementation pairs **calibrated token counts** (derived from
+n=10,598 historical trials) with **live OpenRouter pricing**, falling back
+to LiteLLM's static price table for non-OpenRouter providers and to "free"
+for Ollama. Day-1 estimates on a fresh machine are within ~10% of reality.
+
+This page documents the two phases, the empirical data behind the
+calibration, and the design choices that fell out of validating the live
+pricing API against the fallback.
+
+## Methodology
+
+### Phase 4a — empirical-first (abandoned)
+
+The first implementation computed `mean cost / trial` from each run's own
+completed trials, falling back across runs of the same model when the
+current run had `< _MIN_HISTORY_TRIALS` data points. When even the cross-run
+history was empty, a synthetic fallback used **1500 input tokens / 150
+output tokens** multiplied by `litellm.model_cost`.
+
+Two problems surfaced within the first week:
+
+<Steps>
+  <Step title="Cold-install penalty">
+    A new machine with no prior trials always hit the synthetic fallback. The
+    1500/150 numbers were copy-pasted from a generic chat-completion estimate
+    and had no relation to the OASIS task, which sends a single image plus
+    a short paper-verbatim prompt and expects a one-sentence reasoning
+    string. The fallback systematically over-quoted by 3–5× compared to
+    actual billed cost.
+  </Step>
+
+  <Step title="Empirical history was almost free to skip">
+    Once we measured actual token usage (next section) we found the OASIS
+    task is so structurally tight that per-model variance does not justify
+    the bookkeeping overhead. A single global token-count pair handles every
+    model within ~10%. The empirical pipeline existed to recover something
+    that did not need recovering.
+  </Step>
+</Steps>
+
+### Phase 4b — calibrated tokens × live pricing (current)
+
+We replaced the empirical pipeline with two changes:
+
+1. **Calibrate the token counts once, hard-code them.** Run a SQL query
+   over historical trials and cement the result as module constants.
+2. **Source pricing live from OpenRouter** for OpenRouter-routed models;
+   fall back to LiteLLM's static dict for everything else.
+
+The implementation lives in [estimates.py](src/oasis_llm/estimates.py) and
+is fewer lines than the Phase 4a version it replaces.
+
+## Calibration
+
+The calibration query ran against n=10,598 completed trials across nine
+vision models on the OASIS valence/arousal rating task with
+`capture_reasoning=true` and `cache_buster=true`.
+
+| Quantity              |    Mean | Median |   σ |     Range |
+| --------------------- | ------: | -----: | --: | --------: |
+| Input tokens / trial  | **544** |    529 |  51 | 379 – 652 |
+| Output tokens / trial |  **31** |     32 |   8 |   2 – 256 |
+
+Per-model means cluster within the global dispersion: input mean ranges
+449–606 across the nine models, output mean 30–40. The 256-token output
+maximum is a parsing-failure outlier where the model emitted a long
+free-text explanation before recovering — it does not move the mean
+materially.
+
+The shipped constants are `OASIS_INPUT_TOKENS = 560` and
+`OASIS_OUTPUT_TOKENS = 35`. Input is padded slightly above the mean to
+avoid systematic under-quoting; output stays at the rounded mean.
+
+<Note>
+  If the prompt template changes (for example to support multi-image trials),
+  recalibrate by re-running the SQL in `scripts/`. The constants in
+  `estimates.py` are deliberately easy to edit.
+</Note>
+
+## Live pricing
+
+OpenRouter publishes per-model pricing at `/api/v1/models`. The harness
+fetches it with `urllib`, caches the response for one hour, and indexes
+into it by both the bare model id and the `openrouter/` prefixed form so
+that whichever way the user wrote the model name in their config will
+resolve.
+
+```python
+def _openrouter_prices() -> dict[str, tuple[float, float]] | None:
+    # 1h TTL cache; on transient failure, retain previous cache rather
+    # than dropping it so a flaky network does not blank out the UI.
+    ...
+```
+
+Three behaviours fell out of validation:
+
+<Steps>
+  <Step title="Retain previous cache on transient failure">
+    The first implementation cleared the cache to `None` whenever the fetch
+    raised. Result: a single-second network blip wiped the cost column for
+    every Experiments preview until the next user-triggered refresh. We
+    changed this to **return the existing cache on failure** and only
+    refresh the timestamp on success. The user-facing price stays accurate
+    even through brief outages; we re-fetch on the next call after the TTL
+    expires.
+  </Step>
+
+<Step title="Treat zero-priced models as unknown">
+  A handful of OpenRouter entries have `pricing.prompt = "0"` (free routes,
+  deprecated entries). We treat a zero computed price as "unknown" rather than
+  as "free", because the harness already has a distinct `"free"` source for
+  Ollama and we do not want a deprecated OpenRouter entry to silently quote $0
+  for a paid run. The user sees `≥ $X` in the preview when any model in the
+  config returns unknown.
+</Step>
+
+  <Step title="Skip the OpenRouter API for non-OpenRouter providers">
+    Anthropic / OpenAI / Google models that go via LiteLLM directly should
+    not consult OpenRouter pricing — their bare model ids
+    coincidentally collide with OpenRouter route names and would resolve
+    to the wrong price. The provider field in `RunConfig` gates this.
+  </Step>
+</Steps>
+
+## Findings
+
+### Estimate quality vs reality
+
+The shipped Phase 4b constants validate against actual billed cost for the
+two reference models the harness is exercised against most:
+
+| Model                                | Phase 4b estimate | Empirical mean (n>500) | Delta |
+| ------------------------------------ | ----------------: | ---------------------: | ----: |
+| `openai/gpt-4o`                      |   $0.0018 / trial |       $0.00184 / trial |   +2% |
+| `anthropic/claude-sonnet-4.6`        |   $0.0022 / trial |       $0.00242 / trial |   −9% |
+| `google/gemma-4-31b-it` (OpenRouter) | $0.000087 / trial |     $0.0000867 / trial |   <1% |
+
+Three models is not a thorough validation, but the ~10% target is met for
+all of them and the systematic over-quoting from Phase 4a's 1500/150
+fallback is gone.
+
+### Live (in-progress) projection still uses empirical mean
+
+The pre-launch estimate is the only thing that uses calibrated constants.
+**Once a run starts**, the Runs page detail view computes
+`projected_total_usd` as
+`cost_so_far + (remaining × empirical mean cost / done trial)`. Empirical
+data is free once trials start landing and is strictly more accurate than
+the calibrated estimate, so we use it in preference. See
+[`project_run`](src/oasis_llm/estimates.py) for the implementation.
+
+### Latency forecasting was not solved
+
+We deliberately did **not** ship a pre-launch time estimate. Cold-start
+latency for Ollama varies by 10× depending on whether the model is already
+warm, and for OpenRouter it varies with provider routing decisions outside
+our control. The Runs detail view shows live ETA from a 20-trial rolling
+window once the run starts; the Experiments page shows the placeholder
+text **"shown live on Runs once started"** instead.
+
+## Discussion
+
+The clearest lesson from Phase 4a → 4b is that **history is the wrong
+abstraction for static facts**. The OASIS prompt template is fixed. The
+mean output length is fixed. Pricing is whatever the provider charges,
+which we can ask the provider directly. None of these benefit from a
+project-level history table; the only thing the table was doing was hiding
+a hand-tuned constant under a layer of plumbing.
+
+The matching lesson is that **live data should not be lazy**. The
+OpenRouter pricing fetcher is called eagerly on the first preview render
+and refreshed in the background. The user never sees a "loading…" state on
+a price field — the cost preview either renders the live number or, if
+the network is broken, the previous cached number with a tiny `(cached)`
+indicator. Lazy refresh would have made the UI feel slow on first paint
+without buying anything.
+
+## Implementation reference
+
+| Module                                                   | Purpose                                                                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [src/oasis_llm/estimates.py](src/oasis_llm/estimates.py) | All cost / time projection logic. Pure-Python, never raises.                                                 |
+| `OASIS_INPUT_TOKENS` / `OASIS_OUTPUT_TOKENS`             | Calibrated constants from the n=10,598 query.                                                                |
+| `_fetch_openrouter_prices`                               | One-shot urllib GET against `/api/v1/models`, 5 s timeout.                                                   |
+| `_openrouter_prices`                                     | TTL-cached wrapper. Retains previous cache on failure.                                                       |
+| `estimate_cost_per_trial`                                | Public entry point. Routes by provider.                                                                      |
+| `project_run`                                            | Live in-progress projection (DB-read-only).                                                                  |
+| [tests/test_estimates.py](tests/test_estimates.py)       | 19 tests; covers TTL, transient-failure persistence, zero-priced model handling, anthropic-skips-OpenRouter. |
+
+## What was deliberately not done
+
+- **Per-model token calibration.** The per-model means cluster tightly
+  enough that a single global pair is within ~10%. Maintaining nine
+  separate constants is not worth the bookkeeping.
+- **Latency forecasting at experiment-design time.** Cold-start variance is
+  too high for the number to be useful. Live ETA on the Runs page covers
+  the in-flight case; pre-launch users get a calibrated cost estimate but
+  no calibrated time estimate.
+- **A "refresh prices" button in the UI.** The 1 h TTL refreshes
+  automatically and the user has no signal that distinguishes "cached" from
+  "stale". Adding a button would invite spurious clicks.
+
+## Reproducing the calibration
+
+```sql
+SELECT
+  count(*)                          AS n,
+  round(avg(input_tokens),  1)      AS input_mean,
+  round(stddev(input_tokens), 1)    AS input_sd,
+  min(input_tokens)                 AS input_min,
+  max(input_tokens)                 AS input_max,
+  round(avg(output_tokens), 1)      AS output_mean,
+  round(stddev(output_tokens), 1)   AS output_sd,
+  min(output_tokens)                AS output_min,
+  max(output_tokens)                AS output_max
+FROM trials
+WHERE status = 'done'
+  AND input_tokens IS NOT NULL
+  AND output_tokens IS NOT NULL;
+```
+
+Run against `data/llm_runs.duckdb` (or a snapshot if the dashboard holds
+the lock). Update the constants in
+[estimates.py](src/oasis_llm/estimates.py) if the new mean differs by more
+than ~5%.
+
+## References
+
+- [estimates.py](src/oasis_llm/estimates.py) — implementation
+- [tests/test_estimates.py](tests/test_estimates.py) — 19 tests including
+  TTL caching, transient-failure persistence, zero-priced model handling
+- [OpenRouter API — list available models](https://openrouter.ai/docs/api-reference/list-available-models)
+- [LiteLLM `model_cost` documentation](https://docs.litellm.ai/docs/completion/token_usage#3-completion_cost)
