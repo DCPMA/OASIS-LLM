@@ -112,6 +112,55 @@ def _render_runtime():
                 "(Persisted to .env for future processes.)"
             )
 
+    st.markdown("---")
+    st.subheader("Default request timeout (s)")
+    st.markdown(
+        "Default `request_timeout_s` for **new** experiment configs. "
+        "Existing configs keep their saved value. Bump to 120-300 if you "
+        "regularly run medium/large local Ollama models — under concurrency "
+        "they queue inside Ollama and trip the default 60s ceiling."
+    )
+    cur_to = os.getenv("OASIS_DEFAULT_TIMEOUT_S", "")
+    try:
+        cur_to_int = int(cur_to) if cur_to else 60
+    except ValueError:
+        cur_to_int = 60
+    new_to = st.slider(
+        "OASIS_DEFAULT_TIMEOUT_S",
+        min_value=10, max_value=600, step=10, value=cur_to_int,
+        help="Per-call timeout. Failed calls eat the FULL value × (max_retries+1).",
+    )
+    if st.button("Apply timeout", type="secondary"):
+        os.environ["OASIS_DEFAULT_TIMEOUT_S"] = str(new_to)
+        _patch_env_file("OASIS_DEFAULT_TIMEOUT_S", str(new_to))
+        st.success(f"Default timeout set to {new_to}s.")
+
+    st.markdown("---")
+    st.subheader("Ollama parallelism (advice)")
+    st.markdown(
+        "By default Ollama serves **one** request at a time per model "
+        "instance. Concurrent requests beyond that queue inside the Ollama "
+        "server, which is why a config's `max_concurrency=4` can still trip "
+        "60s timeouts even though each individual call only takes 6-7s.\n\n"
+        "Two env vars on the **Ollama server** (not this process) control "
+        "real parallelism:\n"
+        "- `OLLAMA_NUM_PARALLEL` — concurrent requests served per loaded model "
+        "(default 1; try 2-4 on a Mac with enough RAM).\n"
+        "- `OLLAMA_MAX_LOADED_MODELS` — how many distinct models stay in VRAM "
+        "(default 1).\n\n"
+        "Restart `ollama serve` after setting these. "
+        "Example macOS launch: "
+        "`OLLAMA_NUM_PARALLEL=4 OLLAMA_MAX_LOADED_MODELS=2 ollama serve`"
+    )
+    # Quick check: what is the running Ollama server doing?
+    try:
+        import requests as _rq
+        _rq.get("http://localhost:11434/api/version", timeout=1).raise_for_status()
+        st.caption("✅ Ollama is reachable on localhost:11434. The env vars above "
+                   "must be set in the *server* environment, not here.")
+    except Exception:
+        st.caption("⚠️ Ollama is not reachable on localhost:11434.")
+
 
 # ─── Environment inspection ────────────────────────────────────────────────
 def _render_env():

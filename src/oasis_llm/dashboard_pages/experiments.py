@@ -326,6 +326,11 @@ def _create_form():
     if "exp_configs" not in st.session_state:
         default_provider = "ollama" if _ollama_models() else "openrouter"
         default_model = _models_for(default_provider)[0]
+        import os as _os
+        try:
+            _default_to = int(_os.getenv("OASIS_DEFAULT_TIMEOUT_S", "60"))
+        except ValueError:
+            _default_to = 60
         st.session_state["exp_configs"] = [
             {
                 "config_name": _slug_from_model(default_model),
@@ -336,7 +341,7 @@ def _create_form():
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": 4,
                 "max_retries": 2,
-                "request_timeout_s": 60,
+                "request_timeout_s": _default_to,
                 "disable_thinking": True,
             }
         ]
