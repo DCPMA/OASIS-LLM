@@ -21,8 +21,11 @@ class RunConfig(BaseModel):
     max_concurrency: int = 4
     request_timeout_s: int = 60
     max_retries: int = 3
+    retry_backoff_base_s: float = 1.0
+    retry_backoff_coef: float = 2.0
+    ollama_evict_threshold: int = 3  # consecutive Ollama timeouts/500s before evict-and-reload (0=disable)
     temperature: float | None = None
-    max_tokens: int = 256
+    max_tokens: int | None = None  # None = don't send max_tokens (uncapped)
     capture_reasoning: bool = True
     cache_buster: bool = True  # Append per-sample salt to user prompt to force decoding variance even at temperature=0. Placed AFTER image so prefix-cacheability is preserved.
     system_prompt_override: str | None = None  # full replacement of paper-verbatim system prompt
@@ -36,6 +39,7 @@ class RunConfig(BaseModel):
         #   - samples_per_image (we want to support progressive expansion)
         payload = self.model_dump(exclude={
             "name", "max_concurrency", "request_timeout_s", "max_retries",
+            "retry_backoff_base_s", "retry_backoff_coef", "ollama_evict_threshold",
             "samples_per_image",
         })
         blob = json.dumps(payload, sort_keys=True).encode()

@@ -216,7 +216,6 @@ async def _call_model(
     call_kwargs = dict(
         model=model_id,
         messages=messages,
-        max_tokens=cfg.max_tokens,
         timeout=cfg.request_timeout_s,
         metadata={
             "trace_name": "oasis-llm",
@@ -233,6 +232,8 @@ async def _call_model(
         **provider_kwargs,
         **cfg.extra_params,
     )
+    if cfg.max_tokens is not None:
+        call_kwargs["max_tokens"] = cfg.max_tokens
     # OpenRouter native cost reporting
     if cfg.provider == "openrouter":
         call_kwargs.setdefault("extra_body", {})
@@ -291,7 +292,50 @@ async def _call_model(
     return raw, int((time.monotonic() - t1) * 1000), in_tok, out_tok, cost, finish_reason, response_id
 
 
-async def _worker(cfg: RunConfig, con: duckdb.DuckDBPyConnection, sem: asyncio.Semaphore, lock: asyncio.Lock):
+async def _evict_ollama_model(cfg: RunConfig) -> bool:
+    """POST keep_alive=0 to Ollama to tear down a stuck runner subprocess.
+
+    Returns True if eviction was attempted (regardless of outcome). Use when
+    consecutive Ollama timeouts/500s indicate a runner deadlock — the model
+    stays resident in VRAM but generation produces nothing. Eviction kills
+    the runner so the next request spawns a fresh one.
+    """
+    if cfg.provider != "ollama":
+        return False
+    import httpx
+    base = (cfg.api_base or "http://localhost:11434").rstrip("/")
+    # Strip the litellm provider prefix if present.
+    model = cfg.model.split("/", 1)[-1] if "/" in cfg.model else cfg.model
+    url = f"{base}/api/generate"
+    payload = {"model": model, "keep_alive": 0, "prompt": "", "stream": False}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(url, json=payload)
+        console.print(f"[yellow]\u2622 Evicted Ollama model {model} (consecutive stalls)[/]")
+        return True
+    except Exception as e:
+        console.print(f"[yellow]eviction request failed: {type(e).__name__}: {e}[/]")
+        return True
+
+
+def _is_stall_error(exc: BaseException) -> bool:
+    """Return True for the Ollama runner-deadlock signature."""
+    s = f"{type(exc).__name__}: {exc}"
+    return (
+        "Timeout" in s
+        or "APIConnectionError" in s
+        or "Connection timed out" in s
+        or "ollama" in s.lower() and ("500" in s or "internal server error" in s.lower())
+    )
+
+
+async def _worker(
+    cfg: RunConfig,
+    con: duckdb.DuckDBPyConnection,
+    sem: asyncio.Semaphore,
+    lock: asyncio.Lock,
+    stall_state: dict,
+):
     while True:
         async with lock:
             trial = _claim_one(con, cfg.name)
@@ -312,18 +356,47 @@ async def _worker(cfg: RunConfig, con: duckdb.DuckDBPyConnection, sem: asyncio.S
                 cfg, trial["dimension"], trial["image_id"], trial["sample_idx"]
             )
             ph = _prompt_hash(sys_p, usr_p, cfg.model)
-            try:
-                raw, _, in_tok, out_tok, cost, finish_reason, response_id = await _call_model(
-                    cfg, trial["dimension"], trial["image_id"], trial["sample_idx"],
-                    trace_id=trace_id,
-                )
-                rating, reasoning = _parse_rating(raw)
-                if not raw.strip():
-                    error = "empty response from model"
-                elif rating is None:
-                    error = "could not parse rating"
-            except Exception as e:
-                error = f"{type(e).__name__}: {e}"
+            attempts = max(1, int(cfg.max_retries) + 1)
+            base = max(0.0, float(cfg.retry_backoff_base_s))
+            coef = max(1.0, float(cfg.retry_backoff_coef))
+            for attempt in range(attempts):
+                error = None
+                try:
+                    raw, _, in_tok, out_tok, cost, finish_reason, response_id = await _call_model(
+                        cfg, trial["dimension"], trial["image_id"], trial["sample_idx"],
+                        trace_id=trace_id,
+                    )
+                    rating, reasoning = _parse_rating(raw)
+                    if not raw.strip():
+                        error = "empty response from model"
+                    elif rating is None:
+                        error = "could not parse rating"
+                except Exception as e:
+                    error = f"{type(e).__name__}: {e}"
+                # Track Ollama stall streak across workers; trigger evict when
+                # threshold hit. Successful trial resets the counter.
+                if cfg.provider == "ollama":
+                    if error and _is_stall_error(Exception(error)):
+                        stall_state["streak"] = stall_state.get("streak", 0) + 1
+                        threshold = int(cfg.ollama_evict_threshold or 0)
+                        if threshold > 0 and stall_state["streak"] >= threshold:
+                            async with stall_state["evict_lock"]:
+                                # Re-check under lock so only one worker evicts.
+                                if stall_state["streak"] >= threshold:
+                                    await _evict_ollama_model(cfg)
+                                    stall_state["streak"] = 0
+                    elif rating is not None and error is None:
+                        stall_state["streak"] = 0
+                # Success or terminal error → stop retrying.
+                if error is None and rating is not None:
+                    break
+                if attempt + 1 < attempts:
+                    delay = base * (coef ** attempt)
+                    console.print(
+                        f"[dim yellow]retry {attempt + 1}/{attempts - 1} in {delay:.1f}s "
+                        f"({trial['image_id']} {trial['dimension']}): {error}[/]"
+                    )
+                    await asyncio.sleep(delay)
             latency_ms = int((time.monotonic() - t0) * 1000)
             async with lock:
                 _record_result(
@@ -359,7 +432,11 @@ async def run(cfg: RunConfig, con: duckdb.DuckDBPyConnection) -> None:
         )
     sem = asyncio.Semaphore(effective)
     lock = asyncio.Lock()
-    workers = [asyncio.create_task(_worker(cfg, con, sem, lock)) for _ in range(effective)]
+    stall_state = {"streak": 0, "evict_lock": asyncio.Lock()}
+    workers = [
+        asyncio.create_task(_worker(cfg, con, sem, lock, stall_state))
+        for _ in range(effective)
+    ]
     await asyncio.gather(*workers)
     # If we exited because the user paused/cancelled, leave that status alone.
     final = con.execute("SELECT status FROM runs WHERE run_id=?", [cfg.name]).fetchone()

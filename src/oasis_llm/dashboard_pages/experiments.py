@@ -340,7 +340,10 @@ def _create_form():
                 "temperature": 0.0, "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": 4,
-                "max_retries": 2,
+                "max_retries": 3,
+                "retry_backoff_base_s": 1.0,
+                "retry_backoff_coef": 2.0,
+                "ollama_evict_threshold": 3,
                 "request_timeout_s": _default_to,
                 "disable_thinking": True,
             }
@@ -517,11 +520,42 @@ def _create_form():
             cfg["max_retries"] = st.slider(
                 "Max retries per trial",
                 min_value=0, max_value=10,
-                value=int(cfg.get("max_retries", 2)),
+                value=int(cfg.get("max_retries", 3)),
                 key=f"cfgretries_{i}",
                 help=(
                     "How many times the runner re-attempts a trial that errored "
                     "or returned an unparseable response. Set 0 to disable retries."
+                ),
+            )
+            r1, r2 = st.columns(2)
+            with r1:
+                cfg["retry_backoff_base_s"] = st.number_input(
+                    "Retry backoff base (s)",
+                    min_value=0.0, max_value=60.0,
+                    value=float(cfg.get("retry_backoff_base_s", 1.0)),
+                    step=0.5,
+                    key=f"cfgretrybase_{i}",
+                    help="Initial delay before the first retry. delay_n = base × coef^n.",
+                )
+            with r2:
+                cfg["retry_backoff_coef"] = st.number_input(
+                    "Retry backoff coefficient",
+                    min_value=1.0, max_value=10.0,
+                    value=float(cfg.get("retry_backoff_coef", 2.0)),
+                    step=0.5,
+                    key=f"cfgretrycoef_{i}",
+                    help="Multiplier applied each retry. 2.0 = exponential (1, 2, 4, 8s).",
+                )
+            cfg["ollama_evict_threshold"] = st.slider(
+                "Ollama evict-on-stall threshold",
+                min_value=0, max_value=10,
+                value=int(cfg.get("ollama_evict_threshold", 3)),
+                key=f"cfgevict_{i}",
+                help=(
+                    "After this many consecutive Ollama timeouts/500s, the "
+                    "runner POSTs `keep_alive: 0` to evict the stuck Ollama "
+                    "runner subprocess. Next request reloads cleanly. "
+                    "0 = disable. Ignored for non-Ollama providers."
                 ),
             )
             cfg["request_timeout_s"] = st.slider(
@@ -555,7 +589,10 @@ def _create_form():
                 "temperature": 0.0, "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": int(last.get("max_concurrency", 4)),
-                "max_retries": int(last.get("max_retries", 2)),
+                "max_retries": int(last.get("max_retries", 3)),
+                "retry_backoff_base_s": float(last.get("retry_backoff_base_s", 1.0)),
+                "retry_backoff_coef": float(last.get("retry_backoff_coef", 2.0)),
+                "ollama_evict_threshold": int(last.get("ollama_evict_threshold", 3)),
                 "request_timeout_s": int(last.get("request_timeout_s", 60)),
                 "disable_thinking": bool(last.get("disable_thinking", True)),
             })
