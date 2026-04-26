@@ -979,7 +979,7 @@ def _render_pairwise_compare(
                 "t": round(stats["t"], 3),
                 "p": round(stats["p"], 4),
                 "cohens_d": round(d, 3),
-                "pearson_r": round(stats["r"], 3),
+                "pearson_r": round(stats["pearson_r"], 3),
             })
     if rows:
         st.markdown("**Each model vs human**")
@@ -1012,7 +1012,7 @@ def _render_pairwise_compare(
             "t": round(stats["t"], 3),
             "p": round(stats["p"], 4),
             "cohens_d": round(d, 3),
-            "pearson_r": round(stats["r"], 3),
+            "pearson_r": round(stats["pearson_r"], 3),
         })
         # Long form for category breakdown / scatter
         tmp = pairs.reset_index().assign(dimension=dim)
