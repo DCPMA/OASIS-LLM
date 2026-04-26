@@ -31,6 +31,7 @@ PAGES = {
     "Compare Runs":   "🔀",
     "Analyses":       "🔬",
     "Leaderboard":    "🏆",
+    "Settings":       "⚙️",
 }
 
 with st.sidebar:
@@ -77,3 +78,6 @@ elif page == "Analyses":
 elif page == "Leaderboard":
     from oasis_llm.dashboard_pages import leaderboard
     leaderboard.render()
+elif page == "Settings":
+    from oasis_llm.dashboard_pages import settings
+    settings.render()

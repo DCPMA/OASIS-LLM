@@ -251,6 +251,67 @@ def _render_controls(con, run_id: str, status: str, pid, config_path, pending: i
         if pid is not None:
             st.caption(f"🟢 Background process running · PID {pid}")
 
+    # ── Danger zone ────────────────────────────────────────────────────────
+    with st.expander("⚠️ Danger zone — delete this run"):
+        st.markdown(
+            "Permanently removes the run and **all its trials**. If this run "
+            "belongs to an experiment, only this run (one config) is deleted; "
+            "the experiment row is kept. Cannot be undone."
+        )
+        if status == "running" or pid is not None:
+            st.caption("Cancel the run first before deleting.")
+        else:
+            also_lf = st.toggle(
+                "Also delete matching Langfuse traces",
+                value=True,
+                key=f"del_lf_{run_id}",
+                help="Best-effort; requires LANGFUSE_PUBLIC_KEY/SECRET_KEY.",
+            )
+            confirm = st.text_input(
+                "Type the run id to confirm",
+                key=f"del_confirm_{run_id}",
+                placeholder=run_id,
+            )
+            if st.button(
+                "🗑️ Delete run permanently",
+                type="secondary",
+                disabled=(confirm.strip() != run_id),
+                key=f"del_btn_{run_id}",
+            ):
+                from oasis_llm.run_admin import delete_run as _del
+                try:
+                    # DuckDB index can corrupt; drop+recreate around the delete
+                    # to avoid the "Failed to delete all rows from index" fatal.
+                    con.execute("CHECKPOINT")
+                    con.execute("DROP INDEX IF EXISTS idx_trials_status")
+                    summary = _del(con, run_id, delete_langfuse=also_lf)
+                    con.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_trials_status "
+                        "ON trials(run_id, status)"
+                    )
+                    con.execute("CHECKPOINT")
+                except Exception as e:
+                    st.error(f"Delete failed: {e}")
+                else:
+                    msg = (
+                        f"Deleted run `{run_id}` "
+                        f"({summary['trials']} trials"
+                    )
+                    if summary.get("langfuse_traces_deleted"):
+                        msg += f", {summary['langfuse_traces_deleted']} Langfuse traces"
+                    msg += ")."
+                    st.success(msg)
+                    if summary.get("langfuse_error"):
+                        st.warning(f"Langfuse: {summary['langfuse_error']}")
+                    st.session_state.pop("selected_run", None)
+                    st.rerun()
+
+
+def _delete_run(con, run_id: str) -> None:
+    """Legacy shim — delegates to run_admin.delete_run (no Langfuse)."""
+    from oasis_llm.run_admin import delete_run as _del
+    _del(con, run_id, delete_langfuse=False)
+
 
 # ─── latency ───────────────────────────────────────────────────────────────
 def _render_latency(con, run_id: str):

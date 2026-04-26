@@ -267,6 +267,7 @@ def _create_form():
                 "model": default_model,
                 "temperature": 0.0, "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
+                "max_concurrency": 4,
             }
         ]
 
@@ -393,6 +394,16 @@ def _create_form():
             cfg["cache_buster"] = cd4.toggle(
                 "Cache buster", value=bool(cfg["cache_buster"]), key=f"cfgcb_{i}",
             )
+            cfg["max_concurrency"] = st.slider(
+                "Max concurrency",
+                min_value=1, max_value=32,
+                value=int(cfg.get("max_concurrency", 4)),
+                key=f"cfgconc_{i}",
+                help=(
+                    "Per-config concurrent in-flight requests. The global "
+                    "`OASIS_MAX_CONCURRENCY` env var can cap this at runtime."
+                ),
+            )
 
     if to_remove is not None and len(st.session_state["exp_configs"]) > 1:
         st.session_state["exp_configs"].pop(to_remove)
@@ -410,6 +421,7 @@ def _create_form():
                 "model": last["model"],
                 "temperature": 0.0, "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
+                "max_concurrency": int(last.get("max_concurrency", 4)),
             })
             st.rerun()
     with btns[1]:

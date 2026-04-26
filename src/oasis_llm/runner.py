@@ -221,8 +221,13 @@ async def _call_model(
         metadata={
             "trace_name": "oasis-llm",
             "trace_id": trace_id,
+            "session_id": cfg.name,  # Langfuse: groups all trials of a run
             "generation_name": f"{cfg.name}/{dim}",
-            "tags": ["oasis-llm", cfg.provider, cfg.model, dim],
+            "tags": [
+                "oasis-llm", cfg.provider, cfg.model, dim,
+                # If run_id is `{exp}__{cfg}`, surface the experiment id as a tag.
+                *([f"exp:{cfg.name.split('__', 1)[0]}"] if "__" in cfg.name else []),
+            ],
             "trace_user_id": cfg.name,
         },
         **provider_kwargs,
@@ -332,9 +337,23 @@ async def run(cfg: RunConfig, con: duckdb.DuckDBPyConnection) -> None:
     if setup_langfuse():
         console.print("[dim]Langfuse tracing enabled[/]")
     con.execute("UPDATE runs SET status='running' WHERE run_id=?", [cfg.name])
-    sem = asyncio.Semaphore(cfg.max_concurrency)
+    # Optional global cap via env (handy for shared API quotas).
+    import os as _os
+    cap = _os.getenv("OASIS_MAX_CONCURRENCY")
+    effective = cfg.max_concurrency
+    if cap:
+        try:
+            effective = max(1, min(int(cap), cfg.max_concurrency))
+        except ValueError:
+            pass
+    if effective != cfg.max_concurrency:
+        console.print(
+            f"[yellow]concurrency capped {cfg.max_concurrency} → {effective} "
+            f"by OASIS_MAX_CONCURRENCY[/]"
+        )
+    sem = asyncio.Semaphore(effective)
     lock = asyncio.Lock()
-    workers = [asyncio.create_task(_worker(cfg, con, sem, lock)) for _ in range(cfg.max_concurrency)]
+    workers = [asyncio.create_task(_worker(cfg, con, sem, lock)) for _ in range(effective)]
     await asyncio.gather(*workers)
     # If we exited because the user paused/cancelled, leave that status alone.
     final = con.execute("SELECT status FROM runs WHERE run_id=?", [cfg.name]).fetchone()
