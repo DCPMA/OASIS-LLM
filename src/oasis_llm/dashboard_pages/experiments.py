@@ -458,11 +458,10 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
 def _render_launch_preview(dataset_id: str) -> None:
     """Show estimated trial count + cost across all configured runs.
 
-    Cost source per config:
-      - **history** — at least 3 completed trials of this (provider, model)
-      - **fallback** — LiteLLM pricing DB × token assumption
-      - **free** — Ollama (local)
-      - **unknown** — no price data; rendered as "—" with a warning
+    Cost = calibrated tokens (560 in / 35 out, derived from n=10,598 prior
+    trials) × live OpenRouter pricing (1h cache), with LiteLLM's static
+    pricing DB as fallback. Ollama is free; anything not priced renders
+    "—".
 
     Time estimate intentionally omitted: cold-start latency varies too
     wildly to produce a number that doesn't mislead. The Runs page shows
@@ -473,39 +472,31 @@ def _render_launch_preview(dataset_id: str) -> None:
     con = connect_ro()
     if con is None:
         return
-    n_images = _ds.image_count(con, dataset_id) if hasattr(_ds, "image_count") else None
-    if n_images is None:
-        # Fallback to active_image_ids count.
-        try:
-            n_images = len(_ds.active_image_ids(con, dataset_id))
-        except Exception:
-            n_images = 0
+    try:
+        n_images = len(_ds.active_image_ids(con, dataset_id))
+    except Exception:
+        n_images = 0
     n_dimensions = 2  # OASIS valence + arousal (RunConfig default)
 
     rows: list[dict] = []
     total_trials = 0
-    total_cost_low = 0.0
-    total_cost_high = 0.0
-    total_cost_mean = 0.0
+    total_cost = 0.0
     any_unknown = False
     for c in st.session_state.get("exp_configs", []):
         spi = int(c.get("samples_per_image", 5) or 1)
         n_trials = _est.trials_for_config(n_images, n_dimensions, spi)
         total_trials += n_trials
         est = _est.estimate_cost_per_trial(
-            con, c.get("provider", "openrouter"), c.get("model", ""),
+            c.get("provider", "openrouter"), c.get("model", ""),
         )
         if est.mean_usd is None:
             any_unknown = True
+            cfg_total: float | None = None
             cost_str = "—"
-            mean_total = None
         else:
-            mean_total = est.mean_usd * n_trials
-            std_total = (est.std_usd or 0.0) * n_trials
-            total_cost_mean += mean_total
-            total_cost_low += max(0.0, mean_total - std_total)
-            total_cost_high += mean_total + std_total
-            cost_str = _est.format_cost_with_uncertainty(mean_total, std_total)
+            cfg_total = est.mean_usd * n_trials
+            total_cost += cfg_total
+            cost_str = _est.format_cost(cfg_total)
         rows.append({
             "Config": c.get("config_name", "—"),
             "Provider/Model": f"{c.get('provider')}/{c.get('model')}",
@@ -524,22 +515,25 @@ def _render_launch_preview(dataset_id: str) -> None:
         f"{n_images} images × {n_dimensions} dims × samples</div>",
         unsafe_allow_html=True,
     )
-    if total_cost_mean > 0 and not any_unknown:
-        cost_label = (
-            f"{_est.format_cost(total_cost_mean)}"
-            if total_cost_low == total_cost_high
-            else f"{_est.format_cost(total_cost_low)} – {_est.format_cost(total_cost_high)}"
+    if total_cost > 0:
+        cost_label = f"~{_est.format_cost(total_cost)}"
+        if any_unknown:
+            cost_label = f"≥ {_est.format_cost(total_cost)}"
+        cost_sub = (
+            "priced configs only · some unpriced"
+            if any_unknown
+            else "live OpenRouter pricing"
         )
-    elif total_cost_mean > 0:
-        cost_label = f"≥ {_est.format_cost(total_cost_mean)}"
-    else:
+    elif any_unknown:
         cost_label = "—"
+        cost_sub = "no pricing available"
+    else:
+        cost_label = "$0.00"
+        cost_sub = "free (local Ollama)"
     summary_cols[1].markdown(
         f"<div style='color:#8a8aa0; font-size:0.78rem;'>Estimated cost</div>"
         f"<div style='font-weight:600; font-size:1.2rem;'>{cost_label}</div>"
-        f"<div style='color:#8a8aa0; font-size:0.72rem;'>"
-        f"{'free for Ollama configs' if total_cost_mean == 0 else 'priced configs only'}"
-        f"</div>",
+        f"<div style='color:#8a8aa0; font-size:0.72rem;'>{cost_sub}</div>",
         unsafe_allow_html=True,
     )
     summary_cols[2].markdown(
@@ -552,19 +546,23 @@ def _render_launch_preview(dataset_id: str) -> None:
     with st.expander("📊 Estimate breakdown", expanded=False):
         if rows:
             st.dataframe(rows, width='stretch', hide_index=True)
+        st.caption(
+            f"Token calibration: **{_est.OASIS_INPUT_TOKENS} input + "
+            f"{_est.OASIS_OUTPUT_TOKENS} output** tokens per trial "
+            "(measured across 10,598 prior OASIS rating trials; per-model "
+            "variance ±10%). "
+            "Pricing source — `openrouter`: live `/api/v1/models` (1h cache). "
+            "`litellm`: static pricing DB. "
+            "`free`: local Ollama. "
+            "`unknown`: model not in either pricing source."
+        )
         if any_unknown:
             st.caption(
-                "ⓘ Some configs have no pricing in LiteLLM's DB and no run "
-                "history yet. Run one trial of each new model to populate "
-                "empirical estimates."
+                "ⓘ One or more configs have no pricing available. "
+                "Set `OPENROUTER_API_KEY` so the live catalogue includes "
+                "models you have access to, or upgrade `litellm` for newer "
+                "model IDs."
             )
-        st.caption(
-            "**Source legend** — `history`: empirical mean ± SD across past "
-            "completed trials of the same (provider, model). "
-            "`fallback`: LiteLLM pricing × ~1500 input + ~150 output tokens "
-            "per trial (rough). `free`: local Ollama. "
-            "`unknown`: no pricing available."
-        )
 
 
 def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
