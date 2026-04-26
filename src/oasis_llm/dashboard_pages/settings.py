@@ -80,6 +80,66 @@ def _render_db():
         else:
             st.success("Checkpoint complete.")
 
+    st.markdown("---")
+    st.subheader("Rebuild trials primary key")
+    st.markdown(
+        "Use when a write fails with `INTERNAL Error: Failed to append to "
+        "PRIMARY_trials_*: PRIMARY KEY violation` — usually after `kill -9` "
+        "of a runner mid-write. Rebuilds the table via CTAS to clean the "
+        "PK index. Row count is preserved."
+    )
+    if st.button("🛠️ Rebuild trials PK", type="secondary"):
+        con = connect_rw()
+        if con is None:
+            db_locked_warning(); return
+        try:
+            n_before = con.execute("SELECT COUNT(*) FROM trials").fetchone()[0]
+            con.execute("BEGIN")
+            con.execute("CREATE TABLE trials_new AS SELECT * FROM trials")
+            con.execute("DROP TABLE trials")
+            con.execute(
+                """
+                CREATE TABLE trials (
+                  run_id VARCHAR NOT NULL,
+                  image_id VARCHAR NOT NULL,
+                  dimension VARCHAR NOT NULL,
+                  sample_idx INTEGER NOT NULL,
+                  status VARCHAR NOT NULL DEFAULT 'pending',
+                  rating INTEGER,
+                  raw_response VARCHAR,
+                  reasoning VARCHAR,
+                  prompt_hash VARCHAR,
+                  latency_ms INTEGER,
+                  input_tokens INTEGER,
+                  output_tokens INTEGER,
+                  cost_usd DOUBLE,
+                  error VARCHAR,
+                  attempts INTEGER DEFAULT 0,
+                  claimed_at TIMESTAMP,
+                  completed_at TIMESTAMP,
+                  finish_reason VARCHAR,
+                  response_id VARCHAR,
+                  trace_id VARCHAR,
+                  PRIMARY KEY(run_id, image_id, dimension, sample_idx)
+                )
+                """
+            )
+            con.execute("INSERT INTO trials SELECT * FROM trials_new")
+            con.execute("DROP TABLE trials_new")
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trials_status "
+                "ON trials(run_id, status)"
+            )
+            con.execute("COMMIT")
+            con.execute("CHECKPOINT")
+            n_after = con.execute("SELECT COUNT(*) FROM trials").fetchone()[0]
+        except Exception as e:
+            try: con.execute("ROLLBACK")
+            except Exception: pass
+            st.error(f"Failed: {e}")
+        else:
+            st.success(f"Rebuilt. Rows: {n_before} → {n_after}")
+
 
 # ─── Runtime knobs ─────────────────────────────────────────────────────────
 def _render_runtime():

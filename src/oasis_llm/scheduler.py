@@ -9,8 +9,10 @@ Polling loop:
 Spawning uses the new ``oasis-llm run-id <run_id>`` CLI, which loads the
 config from the runs table (no YAML needed for experiment-created runs).
 
-The daemon owns a writable DuckDB connection. Don't run two simultaneously
-against the same DB.
+The daemon opens a fresh writable DuckDB connection PER TICK and closes it
+before sleeping. This is critical: the spawned runner subprocess needs to
+acquire the same DuckDB lock to do its work, so we can never hold the lock
+across the sleep window.
 """
 from __future__ import annotations
 
@@ -50,6 +52,16 @@ def _running_count(con: duckdb.DuckDBPyConnection) -> int:
 
 def _spawn(con: duckdb.DuckDBPyConnection, run_id: str) -> int:
     """Spawn `oasis-llm run-id <run_id>` as a detached child."""
+    pid = _spawn_detached(run_id)
+    con.execute(
+        "INSERT OR REPLACE INTO run_processes (run_id, pid) VALUES (?, ?)",
+        [run_id, pid],
+    )
+    return pid
+
+
+def _spawn_detached(run_id: str) -> int:
+    """Just spawn the subprocess and return its pid. No DB I/O."""
     log_dir = Path("data/logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{run_id.replace('/', '_')}.log"
@@ -60,10 +72,6 @@ def _spawn(con: duckdb.DuckDBPyConnection, run_id: str) -> int:
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
-    )
-    con.execute(
-        "INSERT OR REPLACE INTO run_processes (run_id, pid) VALUES (?, ?)",
-        [run_id, proc.pid],
     )
     return proc.pid
 
@@ -91,14 +99,18 @@ def run_daemon(
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
-    con = connect(db_path) if db_path else connect()
     pid = os.getpid()
     print(f"[scheduler] starting (pid={pid}, poll={poll_interval_s}s)", flush=True)
 
     iterations = 0
     while not _stop_requested:
         iterations += 1
+        # Open a fresh connection per tick so the spawned runner can acquire
+        # the DuckDB lock once we release it. Holding the connection across
+        # the sleep would deadlock every spawn.
+        con = None
         try:
+            con = connect(db_path) if db_path else connect()
             _q.mark_heartbeat(con, pid)
 
             running = _running_count(con)
@@ -110,14 +122,35 @@ def run_daemon(
                     run_id = _q.dequeue_next(con)
                     if run_id is None:
                         break
-                    spawn_pid = _spawn(con, run_id)
+                    # IMPORTANT: close the connection BEFORE spawning so the
+                    # child process can immediately acquire the DuckDB lock
+                    # (otherwise the runner crashes with "Conflicting lock").
+                    con.close()
+                    con = None
+                    spawn_pid = _spawn_detached(run_id)
                     print(
                         f"[scheduler] dequeued {run_id} → pid {spawn_pid}",
                         flush=True,
                     )
+                    # Re-open briefly to record the pid, then close again.
+                    con = connect(db_path) if db_path else connect()
+                    con.execute(
+                        "INSERT OR REPLACE INTO run_processes (run_id, pid) VALUES (?, ?)",
+                        [run_id, spawn_pid],
+                    )
+                    con.close()
+                    con = None
                     running += 1
+                    # Give the freshly-spawned runner a head start to grab the
+                    # lock before we re-open for the next iteration.
+                    time.sleep(2.0)
+                    break  # one spawn per tick keeps things simple
         except Exception as e:  # noqa: BLE001
             print(f"[scheduler] tick error: {type(e).__name__}: {e}", flush=True)
+        finally:
+            if con is not None:
+                try: con.close()
+                except Exception: pass
 
         if max_iterations is not None and iterations >= max_iterations:
             break
