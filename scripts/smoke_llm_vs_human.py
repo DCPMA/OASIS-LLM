@@ -18,7 +18,7 @@ import pandas as pd
 
 from oasis_llm import analyses as an
 from oasis_llm.db import DB_PATH
-from oasis_llm.dashboard_pages import llm_vs_human_explorer as exp
+from oasis_llm.dashboard_pages import _vs_human_analytics as exp
 
 
 def main() -> int:

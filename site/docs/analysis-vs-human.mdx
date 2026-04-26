@@ -1,11 +1,15 @@
 ---
-title: "LLM vs Human Explorer"
-description: "Interactive comparison of LLM ratings against OASIS human norms — live, scopable, and category-aware."
+title: "LLM vs Human analytics"
+description: "Interactive comparison of LLM ratings against OASIS human norms — live, scopable, and category-aware. Lives under the Analysis page in the dashboard."
 icon: "chart-line"
 ---
 
-The **LLM vs Human Explorer** is the live analytical surface for comparing
-any subset of completed runs against OASIS human valence/arousal norms.
+The **Analysis** page in the dashboard is the live analytical surface for
+comparing any subset of completed runs against OASIS human valence/arousal
+norms. It runs in two modes that share the same analytics body:
+
+- **Ad-hoc** — sidebar filters pick runs directly (image set + models).
+- **Curated** — select a saved Analysis bundle to pin its run_ids.
 
 ## Pipeline at a glance
 
@@ -59,7 +63,7 @@ Eight tabs surface the underlying analyses:
     oasis-llm dashboard
     ```
 
-    Then choose **🆚 LLM vs Human** in the sidebar.
+    Then choose **🔬 Analysis** in the sidebar.
   </Tab>
   <Tab title="Hosted">
     A read-only deployment is linked from the navbar

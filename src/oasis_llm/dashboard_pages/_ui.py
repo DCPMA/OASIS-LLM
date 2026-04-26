@@ -214,6 +214,71 @@ def starred_filter_toggle(entity_type: str, *, key: str | None = None) -> bool:
     )
 
 
+# ─── Model blinding ─────────────────────────────────────────────────────────
+def blind_models_toggle(*, key: str = "blind_models") -> bool:
+    """Sidebar toggle that requests anonymisation of model identifiers.
+
+    When ``True``, callers should pass model names through :func:`apply_blinding`
+    before rendering them in any chart, table, or download. The mapping is
+    consistent within a session and shuffled when the toggle is re-enabled
+    after being off.
+    """
+    return st.checkbox(
+        "🙈 Blind models",
+        value=False,
+        key=key,
+        help=(
+            "Replace model identifiers with anonymised labels (Model A, "
+            "Model B, …) across every analytic on this page. Use the "
+            "🔓 Reveal mapping expander to un-blind."
+        ),
+    )
+
+
+def apply_blinding(models: list[str], *, on: bool, session_key: str = "_blind_map") -> dict[str, str]:
+    """Return a dict mapping each real model id to its display label.
+
+    When ``on`` is False, the mapping is the identity. When True, models are
+    sorted deterministically and assigned ``Model A``, ``Model B``, ... A
+    consistent mapping is cached on ``st.session_state[session_key]`` so the
+    same model keeps the same anonymised label for the duration of the
+    session, even as the user navigates between tabs.
+    """
+    if not on:
+        return {m: m for m in models}
+    cache = st.session_state.setdefault(session_key, {})
+    # Refresh mapping if the set of models changes
+    cached_set = set(cache.keys())
+    new_set = set(models)
+    if cached_set != new_set:
+        # Stable, deterministic ordering for reproducibility within a session
+        ordered = sorted(new_set)
+        cache = {}
+        for i, m in enumerate(ordered):
+            # 26 letters then double-letter: Model A..Z, AA, AB, …
+            if i < 26:
+                label = f"Model {chr(ord('A') + i)}"
+            else:
+                a, b = divmod(i, 26)
+                label = f"Model {chr(ord('A') + a - 1)}{chr(ord('A') + b)}"
+            cache[m] = label
+        st.session_state[session_key] = cache
+    return cache
+
+
+def reveal_blinding_expander(mapping: dict[str, str]) -> None:
+    """Render an expander that reveals the active blinding mapping."""
+    if not mapping:
+        return
+    is_blinded = any(real != label for real, label in mapping.items())
+    if not is_blinded:
+        return
+    with st.expander("🔓 Reveal mapping (real model ↔ anonymised label)"):
+        rows = sorted(mapping.items(), key=lambda kv: kv[1])
+        for real, label in rows:
+            st.markdown(f"- `{label}` → **{real}**")
+
+
 def bounded_number_input(
     label: str,
     *,

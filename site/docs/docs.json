@@ -11,7 +11,7 @@
   "navbar": {
     "links": [
       {
-        "label": "Live Explorer",
+        "label": "Live dashboard",
         "href": "https://explorer.oasis-llm.org"
       }
     ]
@@ -37,7 +37,7 @@
           {
             "group": "Analysis",
             "pages": [
-              "llm-vs-human-explorer"
+              "analysis-vs-human"
             ]
           },
           {

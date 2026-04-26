@@ -1,18 +1,15 @@
-"""LLM vs Human (OASIS) — interactive Explorer page.
+"""Reusable analytics body comparing LLM ratings to OASIS human norms.
 
-Live, multi-axis exploration over completed runs joined with OASIS human
-norms. Users can filter by:
+Used by the Analysis page (``analyses.py``) in two modes:
 
-- model (multi-select; "All" = pooled-LLM)
-- OASIS category (Animal / Scene / Person / Object)
-- dimension (valence / arousal)
-- individual image (search)
-- aggregation scope: pooled all-LLMs, by-model, by-category, model × category
+- **Ad-hoc** (``run_ids=None``): the sidebar exposes image-set + model
+  pickers, letting the user scope analytics by directly choosing runs.
+- **Curated** (``run_ids=[...]``): the caller pins a saved Analysis bundle
+  and only the secondary filters (dimensions, categories, image search,
+  scope, n_boot) remain in the sidebar.
 
-The page surfaces the analyses we exposed in :mod:`oasis_llm.analyses`:
-descriptives, paired t-tests, pooled t-test, regression, per-category
-breakdown, distribution comparison, outlier images, inter-LLM agreement,
-and a category × model ANOVA on absolute error.
+The page used to live as a standalone "🆚 LLM vs Human" entry; it is now
+imported by the Analysis page and that nav entry has been removed.
 """
 from __future__ import annotations
 
@@ -24,7 +21,12 @@ import pandas as pd
 import streamlit as st
 
 from oasis_llm import analyses as an
-from oasis_llm.dashboard_pages._ui import connect_ro, page_header
+from oasis_llm.dashboard_pages._ui import (
+    apply_blinding,
+    blind_models_toggle,
+    connect_ro,
+    reveal_blinding_expander,
+)
 
 HUMAN_NORMS_CSV = "OASIS/OASIS.csv"
 CATEGORY_PALETTE = {
@@ -99,13 +101,23 @@ def _load_norms() -> pd.DataFrame:
 
 
 # ─── main render ───────────────────────────────────────────────────────────
-def render() -> None:
-    page_header(
-        "LLM vs Human Explorer",
-        "Live, scopable comparison of LLM ratings against OASIS human norms.",
-        icon="🔬",
-    )
+def render_analytics(
+    *,
+    pinned_run_ids: list[str] | None = None,
+    sidebar_prefix: str = "vsh",
+) -> None:
+    """Render the LLM-vs-Human analytics body.
 
+    Parameters
+    ----------
+    pinned_run_ids
+        If provided, ad-hoc model/image-set pickers are skipped and these
+        runs (filtered to ``status=='done'``) drive the analytics. Used by
+        the Analysis page when the user has selected a curated bundle.
+    sidebar_prefix
+        Used to namespace widget keys so the same helpers can be hosted
+        twice on a page without colliding.
+    """
     runs_meta = _load_run_meta()
     if runs_meta.empty:
         st.info("No runs found in the database yet.")
@@ -116,47 +128,81 @@ def render() -> None:
         st.info("No completed runs yet.")
         return
 
+    if pinned_run_ids:
+        runs_in_scope = runs_done[runs_done["run_id"].isin(pinned_run_ids)].copy()
+        if runs_in_scope.empty:
+            st.info("None of the analysis's runs are completed yet.")
+            return
+    else:
+        runs_in_scope = runs_done
+
     # ── Sidebar filters ──
+    norms = _load_norms()
     with st.sidebar:
-        st.markdown("### Explorer filters")
+        st.markdown("### Analysis filters")
 
-        image_sets = sorted(runs_done["image_set"].dropna().unique().tolist())
-        default_set = image_sets[0] if image_sets else None
-        sel_set = st.selectbox("Image set", image_sets, index=0 if default_set else None)
-
-        runs_in_set = runs_done[runs_done["image_set"] == sel_set]
-        models_avail = sorted(runs_in_set["model"].dropna().unique().tolist())
-        sel_models = st.multiselect(
-            "Models", models_avail,
-            default=models_avail,
-            help="Select one or more models. 'All' (pooled) = mean across the selected models.",
-        )
+        if pinned_run_ids:
+            sel_set = None
+            st.caption(f"Pinned: **{len(runs_in_scope)} run(s)** from the selected analysis.")
+            models_avail = sorted(runs_in_scope["model"].dropna().unique().tolist())
+            sel_models = st.multiselect(
+                "Models", models_avail,
+                default=models_avail,
+                key=f"{sidebar_prefix}_models_curated",
+                help="Subset the curated analysis's runs.",
+            )
+            runs_in_set = runs_in_scope
+        else:
+            image_sets = sorted(runs_done["image_set"].dropna().unique().tolist())
+            sel_set = st.selectbox(
+                "Image set",
+                image_sets,
+                index=0 if image_sets else None,
+                key=f"{sidebar_prefix}_imgset",
+            )
+            runs_in_set = runs_done[runs_done["image_set"] == sel_set]
+            models_avail = sorted(runs_in_set["model"].dropna().unique().tolist())
+            sel_models = st.multiselect(
+                "Models", models_avail,
+                default=models_avail,
+                key=f"{sidebar_prefix}_models_adhoc",
+                help="Select one or more models.",
+            )
 
         sel_dims = st.multiselect(
             "Dimensions", ["valence", "arousal"],
             default=["valence", "arousal"],
+            key=f"{sidebar_prefix}_dims",
         )
 
-        norms = _load_norms()
         cat_avail = sorted(norms["category"].dropna().unique().tolist())
-        sel_cats = st.multiselect("Categories", cat_avail, default=cat_avail)
+        sel_cats = st.multiselect(
+            "Categories", cat_avail, default=cat_avail,
+            key=f"{sidebar_prefix}_cats",
+        )
 
         scope = st.radio(
             "Aggregation scope",
             ["Pooled all-LLMs", "By model", "By category", "Model × Category"],
             index=0,
+            key=f"{sidebar_prefix}_scope",
         )
 
         img_query = st.text_input(
             "Image search", "",
             help="Substring filter on image_id (e.g. 'Wolf', 'Flowers').",
+            key=f"{sidebar_prefix}_imgq",
         ).strip()
 
         n_boot = st.number_input(
             "Bootstrap replicates (0 to disable)",
             min_value=0, max_value=5000, value=0, step=500,
             help="Adds 95% CI columns to t-test outputs. >0 is slow.",
+            key=f"{sidebar_prefix}_nboot",
         )
+
+        st.markdown("---")
+        is_blind = blind_models_toggle(key=f"{sidebar_prefix}_blind")
 
     if not sel_models or not sel_dims or not sel_cats:
         st.warning("Select at least one model, dimension, and category.")
@@ -189,6 +235,14 @@ def render() -> None:
         trials["human_arousal"],
     )
 
+    # ── Apply blinding ──
+    blind_map = apply_blinding(
+        sorted(trials["model"].dropna().unique().tolist()),
+        on=is_blind,
+    )
+    trials["model"] = trials["model"].map(lambda m: blind_map.get(m, m))
+    sel_models_disp = [blind_map.get(m, m) for m in sel_models]
+
     # Per-image (run × image × dim) means
     per_img_run = (
         trials.groupby(["run_id", "model", "image_id", "category", "dimension"], as_index=False)
@@ -207,17 +261,24 @@ def render() -> None:
     kpi_cols[4].metric("Trials", int(trials.shape[0]))
 
     # ── Active filter banner (sidebar controls apply to every tab) ──
-    _models_str = ", ".join(sel_models) if len(sel_models) <= 4 else f"{len(sel_models)} models"
+    _models_str = (
+        ", ".join(sel_models_disp) if len(sel_models_disp) <= 4
+        else f"{len(sel_models_disp)} models"
+    )
     _cats_str = ", ".join(sel_cats) if len(sel_cats) <= 4 else f"{len(sel_cats)} categories"
     _dims_str = ", ".join(sel_dims)
     _img_q = f" · image~'{img_query}'" if img_query else ""
+    _scope_src = f"image set `{sel_set}`" if sel_set else f"pinned analysis ({len(runs_in_scope)} runs)"
+    _blind_str = " · 🙈 blinded" if is_blind else ""
     st.info(
         f"**Sidebar filters apply to every tab below.** "
-        f"Image set `{sel_set}` · models: {_models_str} · "
+        f"{_scope_src} · models: {_models_str} · "
         f"dimensions: {_dims_str} · categories: {_cats_str} · "
-        f"scope: **{scope}**{_img_q}",
+        f"scope: **{scope}**{_img_q}{_blind_str}",
         icon="🎛️",
     )
+    if is_blind:
+        reveal_blinding_expander(blind_map)
 
     tabs = st.tabs([
         "📊 Descriptives",
