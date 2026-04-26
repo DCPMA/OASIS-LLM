@@ -355,6 +355,12 @@ def render_analytics(
             st.dataframe(df_tt, use_container_width=True, hide_index=True)
             _csv_download(df_tt, filename="ttests.csv", key="dl_ttests")
 
+        st.markdown("---")
+        _render_pairwise_compare(
+            per_img_tt, sel_models_disp,
+            key_prefix=f"{sidebar_prefix}_pair",
+        )
+
     # ── Tab 3: regression LLM = a + b·Human ──
     with tabs[2]:
         st.caption("OLS regression LLM = a + b · Human (perfect calibration: a=0, b=1).")
@@ -902,3 +908,170 @@ def _render_power_tab(
         st.caption(f"Curve fixes power={pwr:.2f}, α={float(alpha):.3f}.")
         _csv_download(curve, filename="power_curve.csv",
                       key=f"{key_prefix}_dl_curve")
+
+
+def _render_pairwise_compare(
+    per_img_run: pd.DataFrame,
+    sel_models_disp: list[str],
+    *,
+    key_prefix: str,
+) -> None:
+    """Side-by-side comparison of two selected LLMs.
+
+    Renders three sub-blocks:
+
+    1. **Each model vs human** — paired t-test per dimension (image-mean
+       LLM_X vs image-mean human) for Model A and Model B side-by-side.
+    2. **Model A vs Model B** — direct paired t-test on the per-image
+       LLM means (no human in the loop).
+    3. **A − B per category** — mean delta and Cohen's d by category.
+    """
+    st.markdown("##### 🔀 Compare two LLMs head-to-head")
+    if len(sel_models_disp) < 2:
+        st.caption("Select at least two models in the sidebar to enable pairwise comparison.")
+        return
+
+    avail = sorted(per_img_run["model"].dropna().unique().tolist())
+    if len(avail) < 2:
+        st.caption("Not enough models in scope after filters.")
+        return
+
+    cA, cB = st.columns(2)
+    a_default = 0
+    b_default = 1 if len(avail) > 1 else 0
+    model_a = cA.selectbox(
+        "Model A", avail, index=a_default, key=f"{key_prefix}_a",
+    )
+    # Force B != A in the default unless impossible
+    b_options = [m for m in avail if m != model_a]
+    if not b_options:
+        st.caption("Need a second model.")
+        return
+    model_b = cB.selectbox(
+        "Model B", b_options,
+        index=min(b_default, len(b_options) - 1),
+        key=f"{key_prefix}_b",
+    )
+
+    sub_a = per_img_run[per_img_run["model"] == model_a]
+    sub_b = per_img_run[per_img_run["model"] == model_b]
+    if sub_a.empty or sub_b.empty:
+        st.caption("One of the selected models has no rows in scope.")
+        return
+
+    # ── 1. Each model vs human (paired) ──
+    rows = []
+    for label, sub in (("A: " + model_a, sub_a), ("B: " + model_b, sub_b)):
+        for dim, ssub in sub.groupby("dimension"):
+            pairs = (ssub.groupby("image_id")
+                         .agg(llm=("llm_mean", "mean"),
+                              human=("human_value", "first"))
+                         .dropna())
+            if pairs.shape[0] < 3:
+                continue
+            stats = _ttest_one(pairs["llm"].to_numpy(), pairs["human"].to_numpy())
+            d = _cohens_d_paired((pairs["llm"] - pairs["human"]).to_numpy())
+            rows.append({
+                "scope": label, "dimension": dim, "n_images": int(pairs.shape[0]),
+                "llm_mean": round(float(pairs["llm"].mean()), 3),
+                "human_mean": round(float(pairs["human"].mean()), 3),
+                "mean_diff": round(float((pairs["llm"] - pairs["human"]).mean()), 3),
+                "t": round(stats["t"], 3),
+                "p": round(stats["p"], 4),
+                "cohens_d": round(d, 3),
+                "pearson_r": round(stats["r"], 3),
+            })
+    if rows:
+        st.markdown("**Each model vs human**")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # ── 2. Direct paired t-test (Model A vs Model B) on shared images ──
+    st.markdown("**Model A vs Model B (paired on shared images)**")
+    rows_ab = []
+    delta_long = []  # for category breakdown
+    for dim in sorted(set(sub_a["dimension"]).intersection(sub_b["dimension"])):
+        ax = (sub_a[sub_a["dimension"] == dim]
+              .groupby("image_id")
+              .agg(a=("llm_mean", "mean"),
+                   category=("category", "first")))
+        bx = (sub_b[sub_b["dimension"] == dim]
+              .groupby("image_id")
+              .agg(b=("llm_mean", "mean")))
+        pairs = ax.join(bx, how="inner").dropna()
+        if pairs.shape[0] < 3:
+            continue
+        diff = (pairs["a"] - pairs["b"]).to_numpy()
+        stats = _ttest_one(pairs["a"].to_numpy(), pairs["b"].to_numpy())
+        d = _cohens_d_paired(diff)
+        rows_ab.append({
+            "dimension": dim, "n_images": int(pairs.shape[0]),
+            "mean_A": round(float(pairs["a"].mean()), 3),
+            "mean_B": round(float(pairs["b"].mean()), 3),
+            "mean_diff_A_minus_B": round(float(diff.mean()), 3),
+            "sd_diff": round(float(diff.std(ddof=1)), 3),
+            "t": round(stats["t"], 3),
+            "p": round(stats["p"], 4),
+            "cohens_d": round(d, 3),
+            "pearson_r": round(stats["r"], 3),
+        })
+        # Long form for category breakdown / scatter
+        tmp = pairs.reset_index().assign(dimension=dim)
+        delta_long.append(tmp)
+
+    if not rows_ab:
+        st.info("No shared images between the two models for any dimension.")
+        return
+
+    df_ab = pd.DataFrame(rows_ab)
+    kc = st.columns(4)
+    kc[0].metric("Dimensions tested", len(df_ab))
+    sig = int((df_ab["p"] < 0.05).sum())
+    kc[1].metric("Significant (p<0.05)", sig)
+    kc[2].metric("Max |Cohen's d|", f"{df_ab['cohens_d'].abs().max():.2f}")
+    kc[3].metric("Max |Δ A−B|", f"{df_ab['mean_diff_A_minus_B'].abs().max():.2f}")
+    st.dataframe(df_ab, use_container_width=True, hide_index=True)
+    _csv_download(df_ab, filename="pairwise_AvsB.csv",
+                  key=f"{key_prefix}_dl_ab")
+
+    # ── 3. Per-category breakdown ──
+    long = pd.concat(delta_long, ignore_index=True)
+    long["delta"] = long["a"] - long["b"]
+    cat_rows = []
+    for (dim, cat), sub in long.groupby(["dimension", "category"]):
+        if sub.shape[0] < 3:
+            continue
+        diff = sub["delta"].to_numpy()
+        d = _cohens_d_paired(diff)
+        cat_rows.append({
+            "dimension": dim, "category": cat,
+            "n_images": int(sub.shape[0]),
+            "mean_A": round(float(sub["a"].mean()), 3),
+            "mean_B": round(float(sub["b"].mean()), 3),
+            "mean_diff_A_minus_B": round(float(diff.mean()), 3),
+            "cohens_d": round(d, 3),
+        })
+    if cat_rows:
+        st.markdown("**A − B by category**")
+        st.dataframe(pd.DataFrame(cat_rows),
+                     use_container_width=True, hide_index=True)
+
+    # ── 4. Scatter A vs B ──
+    try:
+        import plotly.express as px
+        fig = px.scatter(
+            long, x="b", y="a", color="category", facet_col="dimension",
+            hover_data=["image_id"],
+            labels={"a": f"{model_a} (Model A)", "b": f"{model_b} (Model B)"},
+            color_discrete_map=CATEGORY_PALETTE,
+        )
+        # y = x reference line
+        for col_idx, dim in enumerate(sorted(long["dimension"].unique()), start=1):
+            fig.add_shape(
+                type="line", x0=1, y0=1, x1=7, y1=7,
+                line={"dash": "dash", "color": "#888"},
+                xref=f"x{col_idx}", yref=f"y{col_idx}",
+            )
+        fig.update_layout(height=380, margin={"t": 40, "b": 30})
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception:
+        pass
