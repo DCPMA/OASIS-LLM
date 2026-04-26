@@ -1,6 +1,22 @@
-"""Analyses page: aggregate ratings across runs that share a dataset."""
+"""Analysis page: three views over completed runs.
+
+Three top-level tabs:
+
+- **Curated** — Named, persisted analyses (CRUD). Each analysis pins a set of
+  runs against one dataset and surfaces aggregations, cross-run correlation,
+  vs-human-norms scatter, pair deltas + Bland–Altman, and ICC.
+- **Ad-hoc** — Pick any runs (no save) and view scatter vs human + pairwise
+  Pearson correlation, plus a long-format raw table.
+- **Leaderboard** — Score every run against OASIS human norms, rank by
+  Pearson r / Spearman ρ / MAE / RMSE, filter by min image count + dimension.
+
+Replaces the previous separate Compare Runs and Leaderboard pages.
+"""
 from __future__ import annotations
 
+import json
+
+import duckdb
 import pandas as pd
 import streamlit as st
 
@@ -10,6 +26,143 @@ from oasis_llm.dashboard_pages._ui import (
     connect_ro, connect_rw, db_locked_warning, kpi, page_header, star_button,
     starred_filter_toggle,
 )
+
+
+HUMAN_NORMS_CSV = "OASIS/OASIS.csv"
+
+
+# ── Metric documentation ────────────────────────────────────────────────────
+# Centralised inline "ℹ️ About this metric" copy, shown next to each chart so
+# readers can see what the number means and where it comes from. Citations
+# point to the canonical paper for each statistic.
+_METRIC_DOCS: dict[str, tuple[str, str]] = {
+    "pearson_r": (
+        "Pearson r — linear correlation",
+        "Measures the **linear** association between two ratings on a "
+        "continuous scale (LLM mean vs. human mean per image). "
+        "Range: −1 (perfect inverse) … 0 (none) … +1 (perfect). "
+        "Sensitive to outliers; assumes roughly bivariate-normal data.\n\n"
+        "*Reference:* Pearson, K. (1895). *Notes on regression and "
+        "inheritance in the case of two parents.* Proc. R. Soc. London, "
+        "**58**, 240–242."
+    ),
+    "spearman_rho": (
+        "Spearman ρ — rank correlation",
+        "Pearson r computed on **ranks** rather than raw values. Robust to "
+        "outliers and monotonic-but-nonlinear relationships. Useful when "
+        "the LLM's scale calibration differs from human raters but the "
+        "*ordering* of images is preserved.\n\n"
+        "*Reference:* Spearman, C. (1904). *The proof and measurement of "
+        "association between two things.* Am. J. Psychol., **15**, 72–101."
+    ),
+    "mae_rmse": (
+        "MAE / RMSE — absolute error",
+        "**MAE** = mean(|LLM − human|), in rating-scale units. **RMSE** = "
+        "√mean((LLM − human)²); penalises large deviations more heavily. "
+        "Both measure **calibration** (does the LLM hit the right level?), "
+        "complementing correlation which only measures the *shape* of the "
+        "relationship. A run can have r ≈ 0.9 yet MAE = 1.5 if it's "
+        "consistently shifted."
+    ),
+    "bland_altman": (
+        "Bland–Altman — agreement",
+        "Plots the **difference** between two raters (y) against their "
+        "**mean** (x). The horizontal *bias* line shows systematic "
+        "shift; the dashed *limits of agreement* (bias ± 1.96·SD) show "
+        "the range within which 95% of differences fall. Designed for "
+        "comparing measurement methods — here, treating LLMs as raters.\n\n"
+        "*Reference:* Bland, J.M., & Altman, D.G. (1986). *Statistical "
+        "methods for assessing agreement between two methods of clinical "
+        "measurement.* The Lancet, **327**(8476), 307–310."
+    ),
+    "icc": (
+        "ICC — inter-rater reliability",
+        "Intraclass correlation. **ICC(2,1)** = absolute agreement, single "
+        "rater (treats runs as a random sample of possible raters). "
+        "**ICC(3,1)** = consistency only (runs are the specific raters of "
+        "interest). Rule of thumb: <0.5 poor · 0.5–0.75 moderate · "
+        "0.75–0.9 good · >0.9 excellent.\n\n"
+        "*References:* Shrout, P.E. & Fleiss, J.L. (1979). *Intraclass "
+        "correlations: uses in assessing rater reliability.* Psychol. Bull., "
+        "**86**(2), 420–428. — McGraw, K.O. & Wong, S.P. (1996). *Forming "
+        "inferences about some intraclass correlation coefficients.* "
+        "Psychol. Methods, **1**(1), 30–46. — Koo, T.K. & Li, M.Y. (2016). "
+        "*A guideline of selecting and reporting ICC for reliability "
+        "research.* J. Chiropr. Med., **15**(2), 155–163."
+    ),
+    "correlation_heatmap": (
+        "Cross-run correlation matrix",
+        "Pairwise Pearson r between every pair of runs, computed on the "
+        "per-image mean ratings they share. High off-diagonal values mean "
+        "the LLMs agree with **each other** even if they disagree with "
+        "humans — useful for spotting systematic LLM biases distinct from "
+        "noise."
+    ),
+}
+
+
+def _metric_doc(key: str, *, expanded: bool = False) -> None:
+    """Render an inline ``ℹ️ About this metric`` expander."""
+    title, body = _METRIC_DOCS[key]
+    with st.expander(f"ℹ️ About this metric — {title}", expanded=expanded):
+        st.markdown(body)
+
+
+# ── Shared helpers (lifted from the retired compare_runs page) ─────────────
+def _all_runs_meta(con) -> list[dict]:
+    """Run metadata + completed-trial count, sorted newest first."""
+    rows = con.execute(
+        """
+        SELECT r.run_id, r.status, r.config_json, r.created_at,
+               count(t.image_id) FILTER (WHERE t.status='done') AS done
+        FROM runs r LEFT JOIN trials t USING (run_id)
+        GROUP BY r.run_id, r.status, r.config_json, r.created_at
+        ORDER BY r.created_at DESC NULLS LAST
+        """
+    ).fetchall()
+    out = []
+    for run_id, status, cfg_json, created, done in rows:
+        try:
+            cfg = json.loads(cfg_json) if cfg_json else {}
+        except Exception:
+            cfg = {}
+        out.append({
+            "run_id": run_id,
+            "status": status,
+            "model": cfg.get("model"),
+            "provider": cfg.get("provider"),
+            "dataset_id": cfg.get("image_set"),
+            "done": int(done or 0),
+            "created_at": created,
+        })
+    return out
+
+
+def _per_image_means(con, run_ids: list[str]) -> pd.DataFrame:
+    """Long-format means per (run_id, image_id, dimension)."""
+    if not run_ids:
+        return pd.DataFrame()
+    placeholders = ",".join("?" * len(run_ids))
+    return con.execute(
+        f"""
+        SELECT run_id, image_id, dimension, avg(rating) AS mean_rating, count(*) AS n
+        FROM trials
+        WHERE run_id IN ({placeholders}) AND status='done'
+        GROUP BY run_id, image_id, dimension
+        """,
+        run_ids,
+    ).fetchdf()
+
+
+def _human_norms() -> pd.DataFrame:
+    return duckdb.connect(":memory:").execute(
+        f"""
+        SELECT "Theme" AS image_id,
+               "Valence_mean" AS human_valence,
+               "Arousal_mean" AS human_arousal
+        FROM read_csv_auto('{HUMAN_NORMS_CSV}', header=true)
+        """
+    ).fetchdf()
 
 
 def _render_bland_altman(con, analysis_id: str, run_a: str, run_b: str) -> None:
@@ -81,18 +234,28 @@ def _render_bland_altman(con, analysis_id: str, run_a: str, run_b: str) -> None:
 
 def render():
     page_header(
-        "Analyses",
-        "Aggregate and compare runs that rated the same dataset.",
+        "Analysis",
+        "Curated bundles · ad-hoc comparison · global leaderboard. "
+        "All three views work on the same completed-runs corpus.",
         icon="🔬",
     )
     detail_id = st.query_params.get("analysis")
     if detail_id:
         _render_detail(detail_id)
         return
-    _render_list()
+
+    tab_curated, tab_adhoc, tab_lb = st.tabs([
+        "📋  Curated", "🔀  Ad-hoc", "🏆  Leaderboard",
+    ])
+    with tab_curated:
+        _render_curated_list()
+    with tab_adhoc:
+        _render_adhoc_compare()
+    with tab_lb:
+        _render_leaderboard()
 
 
-def _render_list():
+def _render_curated_list():
     con = connect_rw()
     if con is None:
         db_locked_warning(); return
@@ -110,11 +273,14 @@ def _render_list():
     )
 
     st.markdown("---")
-    tab_list, tab_new = st.tabs(["📋  All analyses", "✨  Create new"])
+    sub_list, sub_new = st.tabs(["📚  All analyses", "✨  Create new"])
 
-    with tab_list:
+    with sub_list:
         if not rows:
-            st.info("No analyses yet.")
+            st.info(
+                "No saved analyses yet. Use **Create new** to bundle runs "
+                "into a named, persisted analysis."
+            )
         else:
             starred_only = starred_filter_toggle("analysis")
             if starred_only:
@@ -126,7 +292,7 @@ def _render_list():
             for a in rows:
                 _row_card(a)
 
-    with tab_new:
+    with sub_new:
         _create_form(con)
 
 
@@ -166,6 +332,259 @@ def _create_form(con):
             st.success(f"Created analysis `{aid}`.")
             st.query_params["analysis"] = aid
             st.rerun()
+
+
+def _render_adhoc_compare():
+    """Ad-hoc multi-run comparison (formerly the Compare Runs page).
+
+    Pick any runs across providers/datasets, view per-image scatter vs
+    human norms, pairwise inter-run correlation, and a long-format raw
+    table. State is widget-local; nothing is persisted.
+    """
+    con = connect_ro()
+    if con is None:
+        db_locked_warning(); return
+
+    runs = _all_runs_meta(con)
+    if not runs:
+        st.info("No runs yet."); return
+
+    # Filters
+    fc1, fc2, fc3 = st.columns([1, 1, 1])
+    models_avail = sorted({r["model"] for r in runs if r["model"]})
+    providers_avail = sorted({r["provider"] for r in runs if r["provider"]})
+    datasets_avail = sorted({r["dataset_id"] for r in runs if r["dataset_id"]})
+
+    f_models = fc1.multiselect("Filter model", models_avail, default=[])
+    f_providers = fc2.multiselect("Filter provider", providers_avail, default=[])
+    f_datasets = fc3.multiselect("Filter dataset", datasets_avail, default=[])
+
+    def _passes(r):
+        if f_models and r["model"] not in f_models: return False
+        if f_providers and r["provider"] not in f_providers: return False
+        if f_datasets and r["dataset_id"] not in f_datasets: return False
+        if r["done"] == 0: return False
+        return True
+
+    eligible = [r for r in runs if _passes(r)]
+    if not eligible:
+        st.info(
+            "No runs match these filters (note: runs with 0 completed trials "
+            "are hidden)."
+        )
+        return
+
+    label_to_id = {
+        f"{r['run_id']}  ·  {r['model']}  ·  {r['done']} done": r["run_id"]
+        for r in eligible
+    }
+    selected_labels = st.multiselect(
+        "Select runs to compare (2+ recommended)",
+        list(label_to_id.keys()),
+        default=list(label_to_id.keys())[:min(3, len(label_to_id))],
+        key="adhoc_run_picker",
+    )
+    selected_ids = [label_to_id[l] for l in selected_labels]
+    if not selected_ids:
+        st.info("Select at least one run."); return
+
+    with st.spinner("Aggregating per-image means…"):
+        df = _per_image_means(con, selected_ids)
+        norms = _human_norms()
+    if df.empty:
+        st.info("Selected runs have no completed trials."); return
+
+    run_to_label = {r["run_id"]: r["model"] or r["run_id"] for r in eligible}
+    df["run_label"] = df["run_id"].map(
+        lambda rid: f"{run_to_label[rid]} · {rid[-6:]}"
+    )
+
+    merged = df.merge(norms, on="image_id", how="inner")
+    merged["human_value"] = merged.apply(
+        lambda r: r["human_valence"] if r["dimension"] == "valence"
+        else r["human_arousal"] if r["dimension"] == "arousal"
+        else None, axis=1,
+    )
+    merged = merged.dropna(subset=["human_value"])
+
+    cs = st.columns(3)
+    cs[0].markdown(kpi("Runs", len(selected_ids)), unsafe_allow_html=True)
+    cs[1].markdown(
+        kpi("Image overlap", merged["image_id"].nunique()),
+        unsafe_allow_html=True,
+    )
+    cs[2].markdown(
+        kpi("Trials aggregated", int(df["n"].sum())),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+    sub_scatter, sub_corr, sub_table = st.tabs([
+        "📈 Scatter vs human", "🔗 Pairwise correlations", "📋 Long table",
+    ])
+
+    with sub_scatter:
+        for dim in sorted(merged["dimension"].unique()):
+            sub = merged[merged["dimension"] == dim].copy()
+            if sub.empty: continue
+            st.markdown(f"#### {dim.title()}")
+            chart_df = sub[
+                ["image_id", "run_label", "human_value", "mean_rating"]
+            ].rename(columns={"human_value": "human", "mean_rating": "llm"})
+            st.scatter_chart(
+                chart_df, x="human", y="llm", color="run_label", height=360,
+            )
+            summary = (
+                sub.groupby("run_label")
+                .apply(
+                    lambda g: pd.Series({
+                        "n": len(g),
+                        "pearson_r": (
+                            float(g["mean_rating"].corr(g["human_value"]))
+                            if g["mean_rating"].std() > 0 else float("nan")
+                        ),
+                        "mae": float((g["mean_rating"] - g["human_value"]).abs().mean()),
+                        "rmse": float(((g["mean_rating"] - g["human_value"]) ** 2).mean() ** 0.5),
+                    }),
+                    include_groups=False,
+                )
+                .reset_index()
+            )
+            st.dataframe(
+                summary, width='stretch', hide_index=True,
+                column_config={
+                    "pearson_r": st.column_config.NumberColumn("r", format="%.3f"),
+                    "mae": st.column_config.NumberColumn("MAE", format="%.3f"),
+                    "rmse": st.column_config.NumberColumn("RMSE", format="%.3f"),
+                },
+            )
+        _metric_doc("pearson_r")
+        _metric_doc("mae_rmse")
+
+    with sub_corr:
+        if len(selected_ids) < 2:
+            st.info("Pick 2+ runs for pairwise correlations.")
+        else:
+            for dim in sorted(df["dimension"].unique()):
+                sub = df[df["dimension"] == dim]
+                wide = sub.pivot(
+                    index="image_id", columns="run_label", values="mean_rating"
+                )
+                if wide.shape[1] < 2 or wide.dropna().shape[0] < 3:
+                    continue
+                st.markdown(f"#### {dim.title()} — Pearson r")
+                corr = wide.corr()
+                st.dataframe(
+                    corr.style.format("{:.3f}").background_gradient(
+                        cmap="RdYlGn", vmin=-1, vmax=1, axis=None,
+                    ),
+                    width='stretch',
+                )
+                st.caption(
+                    f"n images with overlap (all runs): "
+                    f"{int(wide.dropna().shape[0])}"
+                )
+            _metric_doc("correlation_heatmap")
+
+    with sub_table:
+        st.dataframe(
+            merged[[
+                "run_id", "run_label", "image_id", "dimension",
+                "mean_rating", "human_value", "n",
+            ]],
+            width='stretch', hide_index=True,
+        )
+        st.download_button(
+            "Download compare.csv",
+            data=merged.to_csv(index=False).encode(),
+            file_name="compare.csv",
+            mime="text/csv",
+        )
+
+
+def _render_leaderboard():
+    """Global leaderboard (formerly the Leaderboard page).
+
+    Scores every run against OASIS human norms via
+    :func:`oasis_llm.analyses.leaderboard` and surfaces per-dimension
+    rankings.
+    """
+    con = connect_ro()
+    if con is None:
+        db_locked_warning(); return
+
+    cs = st.columns([1, 1, 2])
+    min_images = cs[0].number_input(
+        "Min images", min_value=1, max_value=900, value=10, step=1,
+        help="Drop runs with fewer than this many images per dimension.",
+    )
+    sort_by = cs[1].selectbox(
+        "Sort by", ["pearson_r", "spearman_rho", "mae", "rmse"], index=0,
+    )
+    dim_filter = cs[2].multiselect(
+        "Dimensions", ["valence", "arousal", "dominance"],
+        default=["valence", "arousal"],
+    )
+
+    with st.spinner("Scoring runs against OASIS norms…"):
+        df = an.leaderboard(con, min_images=int(min_images))
+    if df.empty:
+        st.info("No runs have enough completed trials matched to OASIS norms yet.")
+        return
+
+    if dim_filter:
+        df = df[df["dimension"].isin(dim_filter)]
+    ascending = sort_by in ("mae", "rmse")
+    df = df.sort_values(["dimension", sort_by], ascending=[True, ascending])
+
+    cs = st.columns(3)
+    cs[0].markdown(kpi("Runs scored", df["run_id"].nunique()), unsafe_allow_html=True)
+    cs[1].markdown(
+        kpi("Best Pearson r",
+            f"{df['pearson_r'].max():.3f}" if not df.empty else "—"),
+        unsafe_allow_html=True,
+    )
+    cs[2].markdown(
+        kpi("Median MAE",
+            f"{df['mae'].median():.3f}" if not df.empty else "—"),
+        unsafe_allow_html=True,
+    )
+
+    for dim, sub in df.groupby("dimension"):
+        st.markdown(f"### {dim.title()}")
+        view = sub[[
+            "run_id", "model", "provider", "n_images",
+            "pearson_r", "spearman_rho", "mae", "rmse",
+            "mean_pred", "mean_human", "temperature",
+        ]].reset_index(drop=True)
+        st.dataframe(
+            view, width='stretch', hide_index=True,
+            column_config={
+                "pearson_r": st.column_config.NumberColumn(
+                    "r (Pearson)", format="%.3f"),
+                "spearman_rho": st.column_config.NumberColumn(
+                    "ρ (Spearman)", format="%.3f"),
+                "mae": st.column_config.NumberColumn("MAE", format="%.3f"),
+                "rmse": st.column_config.NumberColumn("RMSE", format="%.3f"),
+                "mean_pred": st.column_config.NumberColumn(
+                    "mean pred", format="%.2f"),
+                "mean_human": st.column_config.NumberColumn(
+                    "mean human", format="%.2f"),
+                "temperature": st.column_config.NumberColumn(
+                    "T", format="%.1f"),
+            },
+        )
+
+    _metric_doc("pearson_r")
+    _metric_doc("spearman_rho")
+    _metric_doc("mae_rmse")
+
+    st.download_button(
+        "Download leaderboard.csv",
+        data=df.to_csv(index=False).encode(),
+        file_name="leaderboard.csv",
+        mime="text/csv",
+    )
 
 
 def _render_detail(analysis_id: str):
@@ -293,6 +712,7 @@ def _render_detail(analysis_id: str):
                     ),
                     width='stretch',
                 )
+            _metric_doc("correlation_heatmap")
 
     with tab_vs_human:
         merged = an.vs_human_norms(con, analysis_id)
@@ -344,6 +764,8 @@ def _render_detail(analysis_id: str):
                     sub.groupby("run_id")["delta"].mean().round(3).values
                 )
                 st.dataframe(summary, width='stretch', hide_index=True)
+            _metric_doc("pearson_r")
+            _metric_doc("mae_rmse")
 
     with tab_pairs:
         pairs = an.model_pair_deltas(con, analysis_id)
@@ -381,19 +803,13 @@ def _render_detail(analysis_id: str):
                 _render_bland_altman(con, analysis_id, run_a, run_b)
             else:
                 st.caption("Need ≥2 distinct runs.")
+            _metric_doc("bland_altman")
 
     with tab_icc:
         icc = an.icc_across_runs(con, analysis_id)
         if icc.empty:
             st.caption("No data.")
         else:
-            st.markdown(
-                "**Inter-rater reliability across runs.** "
-                "ICC(2,1) = absolute agreement (single rater, runs treated as a "
-                "random sample). ICC(3,1) = consistency (the specific runs are of "
-                "interest). Rule of thumb: <0.5 poor · 0.5–0.75 moderate · "
-                "0.75–0.9 good · >0.9 excellent (Koo & Li 2016)."
-            )
             st.dataframe(
                 icc, width='stretch', hide_index=True,
                 column_config={
@@ -401,6 +817,7 @@ def _render_detail(analysis_id: str):
                     "icc3_1": st.column_config.NumberColumn("ICC(3,1) consistency", format="%.3f"),
                 },
             )
+            _metric_doc("icc", expanded=True)
 
     with tab_export:
         if df.empty:

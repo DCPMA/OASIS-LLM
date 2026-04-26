@@ -28,9 +28,7 @@ PAGES = {
     "Image Explorer": "🖼️",
     "Experiments":    "🧪",
     "Runs":           "📊",
-    "Compare Runs":   "🔀",
-    "Analyses":       "🔬",
-    "Leaderboard":    "🏆",
+    "Analysis":       "🔬",
     "Import / Export": "📦",
     "Settings":       "⚙️",
 }
@@ -70,15 +68,9 @@ elif page == "Experiments":
 elif page == "Runs":
     from oasis_llm.dashboard_pages import runs
     runs.render()
-elif page == "Compare Runs":
-    from oasis_llm.dashboard_pages import compare_runs
-    compare_runs.render()
-elif page == "Analyses":
+elif page == "Analysis":
     from oasis_llm.dashboard_pages import analyses
     analyses.render()
-elif page == "Leaderboard":
-    from oasis_llm.dashboard_pages import leaderboard
-    leaderboard.render()
 elif page == "Import / Export":
     from oasis_llm.dashboard_pages import export as export_page
     export_page.render()
