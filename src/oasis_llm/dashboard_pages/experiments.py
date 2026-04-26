@@ -336,6 +336,7 @@ def _create_form():
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": 4,
                 "max_retries": 2,
+                "request_timeout_s": 60,
                 "disable_thinking": True,
             }
         ]
@@ -518,6 +519,19 @@ def _create_form():
                     "or returned an unparseable response. Set 0 to disable retries."
                 ),
             )
+            cfg["request_timeout_s"] = st.slider(
+                "Request timeout (s)",
+                min_value=10, max_value=600,
+                value=int(cfg.get("request_timeout_s", 60)),
+                step=10,
+                key=f"cfgtimeout_{i}",
+                help=(
+                    "Per-call timeout. Increase for large local models that "
+                    "queue inside Ollama under concurrency (e.g. 27B/40B+ on "
+                    "Apple Silicon often need 120-300s). Failed calls take the "
+                    "FULL timeout × (max_retries+1) before giving up."
+                ),
+            )
 
     if to_remove is not None and len(st.session_state["exp_configs"]) > 1:
         st.session_state["exp_configs"].pop(to_remove)
@@ -537,6 +551,7 @@ def _create_form():
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": int(last.get("max_concurrency", 4)),
                 "max_retries": int(last.get("max_retries", 2)),
+                "request_timeout_s": int(last.get("request_timeout_s", 60)),
                 "disable_thinking": bool(last.get("disable_thinking", True)),
             })
             st.rerun()
@@ -721,6 +736,7 @@ def _render_detail(exp_id: str):
     for p in prog:
         cfg = by_name.get(p["config_name"], {})
         pct = (100 * p["done"] / p["total"]) if p["total"] else 0
+        avg = p["avg_latency_ms"]
         table_rows.append({
             "Config": p["config_name"],
             "Model": cfg.get("model", "—"),
@@ -730,7 +746,10 @@ def _render_detail(exp_id: str):
             "Failed": p["failed"],
             "% done": f"{pct:.1f}%",
             "Cost": f"${p['cost_usd']:.4f}",
-            "Avg ms": p["avg_latency_ms"] or "—",
+            # Coerce to string so Streamlit/Arrow doesn't choke when some
+            # configs have measured latency (int) and others are still pending
+            # ("—").
+            "Avg ms": f"{avg:.0f}" if avg else "—",
             "run_id": p["run_id"],
         })
     st.dataframe(table_rows, width='stretch', hide_index=True)
