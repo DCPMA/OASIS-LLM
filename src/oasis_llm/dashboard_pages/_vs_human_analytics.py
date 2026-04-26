@@ -386,7 +386,10 @@ def render_analytics(
     # ── Tab 4: scatter ──
     with tabs[3]:
         try:
-            _render_scatter(per_img_run, scope=scope)
+            _render_scatter(
+                per_img_run, scope=scope,
+                key_prefix=f"{sidebar_prefix}_scat",
+            )
         except Exception as e:
             st.error(f"Plot failed: {e}")
         _csv_download(
@@ -598,8 +601,22 @@ def _regression_rows(per_img_run: pd.DataFrame, *, scope: str) -> list[dict]:
     return rows
 
 
-def _render_scatter(per_img_run: pd.DataFrame, *, scope: str) -> None:
+def _render_scatter(per_img_run: pd.DataFrame, *, scope: str, key_prefix: str = "vsh_scat") -> None:
     import plotly.express as px
+
+    # ── Intuitive category filter (color-coded pills) ──
+    cats_in_scope = sorted(per_img_run["category"].dropna().unique().tolist())
+    sel_cats = _category_pills(
+        cats_in_scope, key=f"{key_prefix}_cats",
+        label="Show categories",
+    )
+    if not sel_cats:
+        st.caption("Pick at least one category to render the scatter.")
+        return
+    per_img_run = per_img_run[per_img_run["category"].isin(sel_cats)]
+    if per_img_run.empty:
+        st.caption("No rows for the selected categories.")
+        return
 
     if scope == "Pooled all-LLMs":
         agg = per_img_run.groupby(["image_id", "category", "dimension"], as_index=False).agg(
@@ -1075,3 +1092,69 @@ def _render_pairwise_compare(
         st.plotly_chart(fig, use_container_width=True)
     except Exception:
         pass
+
+
+def _category_pills(
+    categories: list[str],
+    *,
+    key: str,
+    label: str = "Categories",
+) -> list[str]:
+    """Color-coded category filter using ``st.pills`` (multi-select).
+
+    Falls back to a horizontal row of checkboxes with colour swatches
+    on Streamlit versions < 1.40 where ``st.pills`` isn't available.
+    Defaults to all categories selected.
+    """
+    if not categories:
+        return []
+
+    state_key = f"{key}_state"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = list(categories)
+
+    # Pretty label with a colour swatch in front, e.g. "🟥 Animal"
+    swatch = {  # unicode emoji squares so it works in pills
+        "Animal": "🟥",
+        "Scene":  "🟩",
+        "Person": "🟦",
+        "Object": "🟨",
+    }
+    pretty = {c: f"{swatch.get(c, '⬜')} {c}" for c in categories}
+    inv = {v: k for k, v in pretty.items()}
+
+    pills_fn = getattr(st, "pills", None)
+    if callable(pills_fn):
+        chosen_pretty = pills_fn(
+            label,
+            options=[pretty[c] for c in categories],
+            selection_mode="multi",
+            default=[pretty[c] for c in st.session_state[state_key] if c in categories],
+            key=key,
+        )
+        chosen = [inv[p] for p in (chosen_pretty or [])]
+    else:
+        # Fallback: row of checkboxes
+        st.caption(label)
+        cols = st.columns(len(categories))
+        chosen = []
+        for col, cat in zip(cols, categories):
+            checked = col.checkbox(
+                pretty[cat],
+                value=cat in st.session_state[state_key],
+                key=f"{key}_{cat}",
+            )
+            if checked:
+                chosen.append(cat)
+
+    # Quick action buttons
+    bcols = st.columns([1, 1, 6])
+    if bcols[0].button("All", key=f"{key}_all"):
+        st.session_state[state_key] = list(categories)
+        st.rerun()
+    if bcols[1].button("None", key=f"{key}_none"):
+        st.session_state[state_key] = []
+        st.rerun()
+
+    st.session_state[state_key] = chosen
+    return chosen
