@@ -188,6 +188,25 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def ensure_schema(con: duckdb.DuckDBPyConnection) -> bool:
+    """Idempotently apply the full schema + migrations on an existing connection.
+
+    Safe to call as often as you like — every statement uses
+    ``CREATE TABLE/INDEX IF NOT EXISTS`` or column-presence guards. Returns
+    ``True`` when the connection accepted the DDL (read-write), ``False`` for
+    a read-only connection or transient DDL conflicts. Downstream code that
+    must tolerate missing tables (e.g. on a stale RO connection attached to
+    a DB another process hasn't migrated yet) should still wrap its own
+    queries defensively.
+    """
+    try:
+        con.execute(SCHEMA)
+        _migrate(con)
+        return True
+    except Exception:
+        return False
+
+
 def lock_holder_pid(db_path: Path | str = DB_PATH) -> int | None:
     """Return the PID of the OS process holding an exclusive DuckDB lock,
     or ``None`` if the file is not locked / not lockable.

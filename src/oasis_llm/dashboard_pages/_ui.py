@@ -226,10 +226,22 @@ def get_con():
         from oasis_llm.db import connect
         return connect()
     try:
-        return _open()
+        con = _open()
     except duckdb.IOException:
         st.cache_resource.clear()
         return None
+    # Auto-heal: re-run lightweight migrations on every retrieval so a
+    # cached connection picks up tables added by newer code without
+    # forcing the user to restart Streamlit. CREATE TABLE IF NOT EXISTS
+    # is a no-op when the table already exists, so cost is negligible.
+    try:
+        from oasis_llm.db import ensure_schema
+        ensure_schema(con)
+    except Exception:
+        # Don't let migration probing take down the page; downstream code
+        # has its own defensive guards.
+        pass
+    return con
 
 
 # Backwards-compat shims; both now return the shared cached connection.
