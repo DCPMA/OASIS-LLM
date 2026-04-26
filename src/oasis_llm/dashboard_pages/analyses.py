@@ -7,7 +7,8 @@ import streamlit as st
 from oasis_llm import analyses as an
 from oasis_llm import datasets as ds
 from oasis_llm.dashboard_pages._ui import (
-    connect_rw, db_locked_warning, kpi, page_header,
+    connect_ro, connect_rw, db_locked_warning, kpi, page_header, star_button,
+    starred_filter_toggle,
 )
 
 
@@ -115,6 +116,13 @@ def _render_list():
         if not rows:
             st.info("No analyses yet.")
         else:
+            starred_only = starred_filter_toggle("analysis")
+            if starred_only:
+                from oasis_llm import favorites as _fav
+                star_set = _fav.starred_set(con, "analysis")
+                rows = [a for a in rows if a.analysis_id in star_set]
+                if not rows:
+                    st.caption("No starred analyses — click ☆ on a row to add one.")
             for a in rows:
                 _row_card(a)
 
@@ -123,15 +131,17 @@ def _render_list():
 
 
 def _row_card(a):
-    cols = st.columns([4, 2, 2, 2])
-    cols[0].markdown(
+    cols = st.columns([0.4, 4, 2, 2, 2])
+    with cols[0]:
+        star_button("analysis", a.analysis_id, key_suffix="list")
+    cols[1].markdown(
         f"<div style='font-weight:600; font-size:1.05rem'>{a.name}</div>"
         f"<div style='color:#8a8aa0; font-size:0.78rem'>{a.analysis_id}</div>",
         unsafe_allow_html=True,
     )
-    cols[1].markdown(f"📁 **{a.dataset_id}**")
-    cols[2].markdown(f"🏃 {len(a.run_ids)} runs")
-    if cols[3].button("Open ›", key=f"openana_{a.analysis_id}", width='stretch'):
+    cols[2].markdown(f"📁 **{a.dataset_id}**")
+    cols[3].markdown(f"🏃 {len(a.run_ids)} runs")
+    if cols[4].button("Open ›", key=f"openana_{a.analysis_id}", width='stretch'):
         st.query_params["analysis"] = a.analysis_id
         st.rerun()
     st.markdown("<hr style='margin:0.5rem 0;'>", unsafe_allow_html=True)
@@ -169,7 +179,7 @@ def _render_detail(analysis_id: str):
             del st.query_params["analysis"]; st.rerun()
         return
 
-    top = st.columns([6, 2])
+    top = st.columns([5, 1, 1, 1])
     top[0].markdown(f"# 🔬 {a.name}")
     top[0].caption(
         f"`{a.analysis_id}` · dataset: **{a.dataset_id}** · "
@@ -177,7 +187,28 @@ def _render_detail(analysis_id: str):
     )
     if a.description:
         top[0].write(a.description)
-    if top[1].button("← All analyses", width='stretch'):
+    with top[1]:
+        star_button("analysis", analysis_id, key_suffix="detail")
+    with top[2]:
+        with st.popover("📤 Export", use_container_width=True):
+            if st.button(
+                "Build zip", key=f"an_export_btn_{analysis_id}",
+                width='stretch', type="primary",
+            ):
+                from oasis_llm.bundles import export_analysis
+                blob = export_analysis(con, analysis_id)
+                st.session_state[f"an_export_blob_{analysis_id}"] = blob
+            blob = st.session_state.get(f"an_export_blob_{analysis_id}")
+            if blob:
+                st.download_button(
+                    f"⬇️ Download ({len(blob) // 1024} KB)",
+                    data=blob,
+                    file_name=f"analysis_{analysis_id}.zip",
+                    mime="application/zip",
+                    key=f"an_export_dl_{analysis_id}",
+                    width='stretch',
+                )
+    if top[3].button("← All", width='stretch'):
         del st.query_params["analysis"]; st.rerun()
 
     cols = st.columns(4)

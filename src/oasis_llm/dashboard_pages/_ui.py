@@ -178,6 +178,42 @@ def page_header(title: str, subtitle: str | None = None, icon: str = ""):
         st.caption(subtitle)
 
 
+def star_button(entity_type: str, entity_id: str, *, key_suffix: str = "") -> bool:
+    """Render a ⭐ / ☆ toggle button. Returns the new starred state.
+
+    Streamlit re-renders inside ``st.button``'s click branch, so the caller
+    typically does not need the return value — but it's available so the
+    page can update an in-memory set without re-querying.
+    """
+    from oasis_llm import favorites as _fav
+    con = get_con()
+    if con is None:
+        return False
+    starred = _fav.is_starred(con, entity_type, entity_id)
+    label = "⭐" if starred else "☆"
+    help_text = "Remove from favourites" if starred else "Add to favourites"
+    key = f"star_{entity_type}_{entity_id}_{key_suffix}".replace("/", "_")
+    if st.button(label, key=key, help=help_text):
+        new_state = _fav.toggle(con, entity_type, entity_id)
+        st.rerun()
+        return new_state
+    return starred
+
+
+def starred_filter_toggle(entity_type: str, *, key: str | None = None) -> bool:
+    """Render a 'Show starred only' toggle. Returns its current state.
+
+    Pages call this once per render and use the return value to filter their
+    list.
+    """
+    return st.toggle(
+        "⭐ Starred only",
+        value=False,
+        key=key or f"starred_only_{entity_type}",
+        help="Filter the list to show only items you have starred.",
+    )
+
+
 def get_con():
     """Single shared DuckDB connection for the Streamlit session, cached.
 

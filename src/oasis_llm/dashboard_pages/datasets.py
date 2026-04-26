@@ -7,7 +7,8 @@ import streamlit as st
 
 from oasis_llm import datasets as ds
 from oasis_llm.dashboard_pages._ui import (
-    connect_ro, connect_rw, db_locked_warning, kpi, page_header, status_pill,
+    connect_ro, connect_rw, db_locked_warning, kpi, page_header, star_button,
+    starred_filter_toggle, status_pill,
 )
 from oasis_llm.images import image_categories, image_path
 
@@ -49,7 +50,13 @@ def _render_list():
         if not rows:
             st.info("No datasets yet.")
         else:
-            # Compact card list
+            starred_only = starred_filter_toggle("dataset")
+            if starred_only:
+                from oasis_llm import favorites as _fav
+                star_set = _fav.starred_set(con_ro, "dataset") if con_ro else set()
+                rows = [d for d in rows if d.dataset_id in star_set]
+                if not rows:
+                    st.caption("No starred datasets — click ☆ on a row to add one.")
             for d in rows:
                 _row_card(d)
 
@@ -59,31 +66,33 @@ def _render_list():
 
 def _row_card(d):
     """Render one dataset row as a clickable card."""
-    cols = st.columns([4, 2, 2, 2, 2])
+    cols = st.columns([0.4, 4, 2, 2, 2, 2])
     with cols[0]:
+        star_button("dataset", d.dataset_id, key_suffix="list")
+    with cols[1]:
         st.markdown(
             f"<div style='font-weight:600; font-size:1.05rem'>{d.dataset_id}</div>"
             f"<div style='color:#8a8aa0; font-size:0.82rem'>{d.description or ''}</div>",
             unsafe_allow_html=True,
         )
-    with cols[1]:
+    with cols[2]:
         st.markdown(
             f"{status_pill(d.status)} &nbsp; {status_pill(d.source)}",
             unsafe_allow_html=True,
         )
-    with cols[2]:
+    with cols[3]:
         st.markdown(
             f"<div style='color:#8a8aa0; font-size:0.78rem;'>active</div>"
             f"<div style='font-weight:600;'>{d.active_count} / {d.image_count}</div>",
             unsafe_allow_html=True,
         )
-    with cols[3]:
+    with cols[4]:
         st.markdown(
             f"<div style='color:#8a8aa0; font-size:0.78rem;'>created</div>"
             f"<div style='font-size:0.85rem;'>{str(d.created_at)[:19] if d.created_at else '-'}</div>",
             unsafe_allow_html=True,
         )
-    with cols[4]:
+    with cols[5]:
         if st.button("Open ›", key=f"open_{d.dataset_id}", width='stretch'):
             st.query_params["dataset"] = d.dataset_id
             st.rerun()
@@ -193,7 +202,7 @@ def _render_detail(dataset_id: str):
     elif d.status == "archived":
         st.info("🔒 This dataset is archived.")
 
-    btn_cols = st.columns(6)
+    btn_cols = st.columns(7)
     with btn_cols[0]:
         if not is_locked and st.button("✅ Approve", width='stretch', disabled=len(active_imgs) == 0):
             con = connect_rw()
@@ -212,21 +221,52 @@ def _render_detail(dataset_id: str):
         ):
             st.session_state[f"confirm_shuf_{dataset_id}"] = True
     with btn_cols[2]:
+        # Single-dataset export — small CSVs, large if include_images.
+        with st.popover("📤 Export", use_container_width=True):
+            include_images = st.checkbox(
+                "Bundle image files",
+                value=False,
+                key=f"ds_export_imgs_{dataset_id}",
+                help=(
+                    "Include the OASIS .jpg files inside the zip so the "
+                    "receiver doesn't need a local images checkout. Adds "
+                    "≈100 KB per image."
+                ),
+            )
+            if st.button(
+                "Build zip", key=f"ds_export_btn_{dataset_id}",
+                width='stretch', type="primary",
+            ):
+                from oasis_llm.bundles import export_dataset
+                con = connect_rw() or connect_ro()
+                blob = export_dataset(con, dataset_id, include_images=include_images)
+                st.session_state[f"ds_export_blob_{dataset_id}"] = blob
+            blob = st.session_state.get(f"ds_export_blob_{dataset_id}")
+            if blob:
+                st.download_button(
+                    f"⬇️ Download ({len(blob) // 1024} KB)",
+                    data=blob,
+                    file_name=f"dataset_{dataset_id}.zip",
+                    mime="application/zip",
+                    key=f"ds_export_dl_{dataset_id}",
+                    width='stretch',
+                )
+    with btn_cols[3]:
         if d.status != "archived" and d.source != "builtin" and st.button("🗄️ Archive", width='stretch'):
             con = connect_rw()
             if con is None: db_locked_warning(); return
             ds.archive(con, dataset_id); st.rerun()
-    with btn_cols[3]:
+    with btn_cols[4]:
         if st.button("📋 Duplicate", width='stretch'):
             con = connect_rw()
             if con is None: db_locked_warning(); return
             new_id = ds.duplicate(con, dataset_id, new_name=f"{d.dataset_id}-copy")
             st.query_params["dataset"] = new_id
             st.rerun()
-    with btn_cols[4]:
+    with btn_cols[5]:
         if d.source != "builtin" and st.button("🗑️ Delete", width='stretch', type="secondary"):
             st.session_state[f"confirm_del_{dataset_id}"] = True
-    with btn_cols[5]:
+    with btn_cols[6]:
         if st.session_state.get(f"confirm_del_{dataset_id}"):
             if st.button("⚠️ Confirm delete", width='stretch', type="primary"):
                 con = connect_rw()
@@ -235,6 +275,8 @@ def _render_detail(dataset_id: str):
                 del st.query_params["dataset"]
                 st.session_state.pop(f"confirm_del_{dataset_id}", None)
                 st.rerun()
+        else:
+            star_button("dataset", dataset_id, key_suffix="detail")
 
     # Shuffle confirmation banner — destructive (replaces all images), so we
     # require an explicit second click.

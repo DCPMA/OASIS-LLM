@@ -157,6 +157,243 @@ def export_experiment(con: duckdb.DuckDBPyConnection, experiment_id: str) -> byt
     return buf.getvalue()
 
 
+# ─── dataset export ────────────────────────────────────────────────────────
+def export_dataset(
+    con: duckdb.DuckDBPyConnection,
+    dataset_id: str,
+    *,
+    include_images: bool = False,
+) -> bytes:
+    """Build a zip bundle for a single dataset.
+
+    Layout:
+        manifest.json
+        dataset.json
+        dataset_images.csv
+        images/<image_id>.jpg     (only when include_images=True)
+
+    ``include_images=True`` copies every active image file into the bundle so
+    the receiving workspace doesn't need a local OASIS/images checkout. This
+    can produce large zips (≥100 MB for the full pool).
+    """
+    ds_row = con.execute(
+        """
+        SELECT dataset_id, name, description, status, source,
+               generation_params, created_at, approved_at
+        FROM datasets WHERE dataset_id=?
+        """,
+        [dataset_id],
+    ).fetchone()
+    if ds_row is None:
+        raise KeyError(f"unknown dataset: {dataset_id}")
+    dataset_dict = {
+        "dataset_id": ds_row[0],
+        "name": ds_row[1],
+        "description": ds_row[2],
+        "status": ds_row[3],
+        "source": ds_row[4],
+        "generation_params": ds_row[5],
+        "created_at": _iso(ds_row[6]),
+        "approved_at": _iso(ds_row[7]),
+    }
+    images_df = con.execute(
+        """
+        SELECT dataset_id, image_id, excluded, note
+        FROM dataset_images WHERE dataset_id=?
+        ORDER BY image_id
+        """,
+        [dataset_id],
+    ).fetchdf()
+
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "dataset",
+        "exported_at": datetime.now(tz=timezone.utc).isoformat(),
+        "dataset_id": dataset_id,
+        "n_images": int(len(images_df)),
+        "images_bundled": include_images,
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest, indent=2))
+        z.writestr("dataset.json", json.dumps(dataset_dict, indent=2))
+        z.writestr(
+            "dataset_images.csv",
+            images_df.to_csv(index=False) if not images_df.empty else "",
+        )
+        if include_images and not images_df.empty:
+            from .images import IMAGES_DIR
+            for iid in images_df["image_id"].tolist():
+                p = IMAGES_DIR / f"{iid}.jpg"
+                if p.exists():
+                    z.write(p, arcname=f"images/{iid}.jpg")
+    return buf.getvalue()
+
+
+# ─── analysis export ───────────────────────────────────────────────────────
+def export_analysis(con: duckdb.DuckDBPyConnection, analysis_id: str) -> bytes:
+    """Build a zip bundle for a saved analysis.
+
+    Layout:
+        manifest.json
+        analysis.json                 (spec row)
+        analysis_runs.csv             (which runs are members + label)
+        per_image_aggregate.csv       (computed by analysis.per_image_aggregate)
+        cross_run_correlations.csv    (when ≥2 runs are present)
+        vs_human_norms.csv            (when human norms are wired up)
+
+    Computed tables are best-effort — if the analysis module raises, the
+    error is recorded under ``manifest.computed_errors`` and other tables
+    proceed.
+    """
+    a_row = con.execute(
+        """
+        SELECT analysis_id, name, description, dataset_id, created_at
+        FROM analyses WHERE analysis_id=?
+        """,
+        [analysis_id],
+    ).fetchone()
+    if a_row is None:
+        raise KeyError(f"unknown analysis: {analysis_id}")
+    analysis_dict = {
+        "analysis_id": a_row[0],
+        "name": a_row[1],
+        "description": a_row[2],
+        "dataset_id": a_row[3],
+        "created_at": _iso(a_row[4]),
+    }
+    runs_df = con.execute(
+        """
+        SELECT analysis_id, run_id, label, added_at
+        FROM analysis_runs WHERE analysis_id=?
+        ORDER BY added_at
+        """,
+        [analysis_id],
+    ).fetchdf()
+
+    computed: dict[str, pd.DataFrame] = {}
+    extras: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    try:
+        from . import analyses as an
+    except Exception as e:
+        an = None  # type: ignore[assignment]
+        errors["import"] = f"{type(e).__name__}: {e}"
+    if an is not None:
+        try:
+            df = an.per_image_aggregate(con, analysis_id)
+            if df is not None and not df.empty:
+                computed["per_image_aggregate"] = df
+        except Exception as e:
+            errors["per_image_aggregate"] = f"{type(e).__name__}: {e}"
+        try:
+            d = an.cross_run_correlations(con, analysis_id)
+            if d:
+                extras["cross_run_correlations"] = d
+        except Exception as e:
+            errors["cross_run_correlations"] = f"{type(e).__name__}: {e}"
+        try:
+            df = an.vs_human_norms(con, analysis_id)
+            if df is not None and not df.empty:
+                computed["vs_human_norms"] = df
+        except Exception as e:
+            errors["vs_human_norms"] = f"{type(e).__name__}: {e}"
+
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "analysis",
+        "exported_at": datetime.now(tz=timezone.utc).isoformat(),
+        "analysis_id": analysis_id,
+        "dataset_id": a_row[3],
+        "n_runs": int(len(runs_df)),
+        "computed_tables": list(computed.keys()),
+        "computed_errors": errors,
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest, indent=2))
+        z.writestr("analysis.json", json.dumps(analysis_dict, indent=2))
+        z.writestr(
+            "analysis_runs.csv",
+            runs_df.to_csv(index=False) if not runs_df.empty else "",
+        )
+        for name, df in computed.items():
+            z.writestr(f"{name}.csv", df.to_csv(index=False))
+            try:
+                z.writestr(f"{name}.parquet", _df_to_parquet(df))
+            except Exception:
+                pass  # Parquet is best-effort — CSV is the source of truth.
+        if extras:
+            z.writestr("extras.json", json.dumps(extras, indent=2, default=str))
+    return buf.getvalue()
+
+
+# ─── global export ─────────────────────────────────────────────────────────
+def export_bundle(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    dataset_ids: list[str] | None = None,
+    experiment_ids: list[str] | None = None,
+    analysis_ids: list[str] | None = None,
+    include_images: bool = False,
+) -> bytes:
+    """Bundle multiple entities into a single ``.zip`` for backup / migration.
+
+    Layout:
+        manifest.json
+        datasets/<dataset_id>.zip
+        experiments/<experiment_id>.zip
+        analyses/<analysis_id>.zip
+
+    Each inner zip is exactly what ``export_*`` would emit individually, so
+    receiving code can extract them and run the existing import path.
+    """
+    dataset_ids = list(dataset_ids or [])
+    experiment_ids = list(experiment_ids or [])
+    analysis_ids = list(analysis_ids or [])
+
+    failures: list[dict] = []
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for did in dataset_ids:
+            try:
+                z.writestr(
+                    f"datasets/{did}.zip",
+                    export_dataset(con, did, include_images=include_images),
+                )
+            except Exception as e:
+                failures.append({"kind": "dataset", "id": did, "error": str(e)})
+        for eid in experiment_ids:
+            try:
+                z.writestr(f"experiments/{eid}.zip", export_experiment(con, eid))
+            except Exception as e:
+                failures.append({"kind": "experiment", "id": eid, "error": str(e)})
+        for aid in analysis_ids:
+            try:
+                z.writestr(f"analyses/{aid}.zip", export_analysis(con, aid))
+            except Exception as e:
+                failures.append({"kind": "analysis", "id": aid, "error": str(e)})
+
+        manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "kind": "global",
+            "exported_at": datetime.now(tz=timezone.utc).isoformat(),
+            "dataset_ids": dataset_ids,
+            "experiment_ids": experiment_ids,
+            "analysis_ids": analysis_ids,
+            "n_datasets": len(dataset_ids),
+            "n_experiments": len(experiment_ids),
+            "n_analyses": len(analysis_ids),
+            "images_bundled": include_images,
+            "failures": failures,
+        }
+        z.writestr("manifest.json", json.dumps(manifest, indent=2))
+    return buf.getvalue()
+
+
 # ─── import ────────────────────────────────────────────────────────────────
 def import_experiment(
     con: duckdb.DuckDBPyConnection,

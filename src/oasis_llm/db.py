@@ -170,6 +170,22 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    # User-facing favourites: a flat star table over heterogeneous entities.
+    # ``entity_type`` is one of {dataset, experiment, analysis, run}; the
+    # entity_id is the corresponding primary key (no FK, since the table
+    # spans heterogeneous targets and we don't want star-on-delete cascades
+    # to surprise anyone — un-stars are cheap to recompute).
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS favorites (
+            entity_type TEXT NOT NULL,
+            entity_id   TEXT NOT NULL,
+            starred_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            note        TEXT,
+            PRIMARY KEY (entity_type, entity_id)
+        )
+        """
+    )
 
 
 def lock_holder_pid(db_path: Path | str = DB_PATH) -> int | None:

@@ -11,7 +11,8 @@ from oasis_llm import datasets as ds
 from oasis_llm import experiments as ex
 from oasis_llm.config import RunConfig
 from oasis_llm.dashboard_pages._ui import (
-    connect_ro, connect_rw, db_locked_warning, kpi, page_header, status_pill,
+    connect_ro, connect_rw, db_locked_warning, kpi, page_header, star_button,
+    starred_filter_toggle, status_pill,
 )
 
 
@@ -280,6 +281,13 @@ def _render_list():
         if not rows:
             st.info("No experiments yet. Create one with the form on the right.")
         else:
+            starred_only = starred_filter_toggle("experiment")
+            if starred_only:
+                from oasis_llm import favorites as _fav
+                star_set = _fav.starred_set(con_ro, "experiment") if con_ro else set()
+                rows = [r for r in rows if r.experiment_id in star_set]
+                if not rows:
+                    st.caption("No starred experiments — click ☆ on a row to add one.")
             for e in rows:
                 _exp_row(e)
 
@@ -330,28 +338,30 @@ def _render_import():
 
 
 def _exp_row(e):
-    cols = st.columns([3, 2, 2, 2, 2])
+    cols = st.columns([0.4, 3, 2, 2, 2, 2])
     with cols[0]:
+        star_button("experiment", e.experiment_id, key_suffix="list")
+    with cols[1]:
         st.markdown(
             f"<div style='font-weight:600; font-size:1.05rem'>{e.name}</div>"
             f"<div style='color:#8a8aa0; font-size:0.78rem'>{e.experiment_id}</div>",
             unsafe_allow_html=True,
         )
-    with cols[1]:
-        st.markdown(status_pill(e.status), unsafe_allow_html=True)
     with cols[2]:
+        st.markdown(status_pill(e.status), unsafe_allow_html=True)
+    with cols[3]:
         st.markdown(
             f"<div style='color:#8a8aa0; font-size:0.78rem;'>dataset</div>"
             f"<div>{e.dataset_id}</div>",
             unsafe_allow_html=True,
         )
-    with cols[3]:
+    with cols[4]:
         st.markdown(
             f"<div style='color:#8a8aa0; font-size:0.78rem;'>configs</div>"
             f"<div>{len(e.configs)}</div>",
             unsafe_allow_html=True,
         )
-    with cols[4]:
+    with cols[5]:
         if st.button("Open ›", key=f"openexp_{e.experiment_id}", width='stretch'):
             st.query_params["experiment"] = e.experiment_id
             st.rerun()
@@ -908,7 +918,7 @@ def _render_detail(exp_id: str):
         except ImportError:
             st.caption("⏱ Live — install `streamlit-autorefresh` for auto-update.")
 
-    top = st.columns([6, 2])
+    top = st.columns([5, 1, 2])
     with top[0]:
         st.markdown(
             f"# 🧪 {e.name} &nbsp; {status_pill(e.status)}",
@@ -919,6 +929,8 @@ def _render_detail(exp_id: str):
         if e.description:
             st.write(e.description)
     with top[1]:
+        star_button("experiment", exp_id, key_suffix="detail")
+    with top[2]:
         if st.button("← All experiments", width='stretch'):
             del st.query_params["experiment"]; st.rerun()
         # Export bundle
