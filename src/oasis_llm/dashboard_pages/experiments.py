@@ -455,6 +455,118 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
     return out
 
 
+def _render_launch_preview(dataset_id: str) -> None:
+    """Show estimated trial count + cost across all configured runs.
+
+    Cost source per config:
+      - **history** — at least 3 completed trials of this (provider, model)
+      - **fallback** — LiteLLM pricing DB × token assumption
+      - **free** — Ollama (local)
+      - **unknown** — no price data; rendered as "—" with a warning
+
+    Time estimate intentionally omitted: cold-start latency varies too
+    wildly to produce a number that doesn't mislead. The Runs page shows
+    ETA once trials start completing.
+    """
+    from oasis_llm import datasets as _ds
+    from oasis_llm import estimates as _est
+    con = connect_ro()
+    if con is None:
+        return
+    n_images = _ds.image_count(con, dataset_id) if hasattr(_ds, "image_count") else None
+    if n_images is None:
+        # Fallback to active_image_ids count.
+        try:
+            n_images = len(_ds.active_image_ids(con, dataset_id))
+        except Exception:
+            n_images = 0
+    n_dimensions = 2  # OASIS valence + arousal (RunConfig default)
+
+    rows: list[dict] = []
+    total_trials = 0
+    total_cost_low = 0.0
+    total_cost_high = 0.0
+    total_cost_mean = 0.0
+    any_unknown = False
+    for c in st.session_state.get("exp_configs", []):
+        spi = int(c.get("samples_per_image", 5) or 1)
+        n_trials = _est.trials_for_config(n_images, n_dimensions, spi)
+        total_trials += n_trials
+        est = _est.estimate_cost_per_trial(
+            con, c.get("provider", "openrouter"), c.get("model", ""),
+        )
+        if est.mean_usd is None:
+            any_unknown = True
+            cost_str = "—"
+            mean_total = None
+        else:
+            mean_total = est.mean_usd * n_trials
+            std_total = (est.std_usd or 0.0) * n_trials
+            total_cost_mean += mean_total
+            total_cost_low += max(0.0, mean_total - std_total)
+            total_cost_high += mean_total + std_total
+            cost_str = _est.format_cost_with_uncertainty(mean_total, std_total)
+        rows.append({
+            "Config": c.get("config_name", "—"),
+            "Provider/Model": f"{c.get('provider')}/{c.get('model')}",
+            "Trials": f"{n_trials:,}",
+            "$/trial":
+                _est.format_cost(est.mean_usd) if est.mean_usd is not None else "—",
+            "Source": est.source,
+            "Estimated cost": cost_str,
+        })
+
+    summary_cols = st.columns(3)
+    summary_cols[0].markdown(
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>Total trials</div>"
+        f"<div style='font-weight:600; font-size:1.2rem;'>{total_trials:,}</div>"
+        f"<div style='color:#8a8aa0; font-size:0.72rem;'>"
+        f"{n_images} images × {n_dimensions} dims × samples</div>",
+        unsafe_allow_html=True,
+    )
+    if total_cost_mean > 0 and not any_unknown:
+        cost_label = (
+            f"{_est.format_cost(total_cost_mean)}"
+            if total_cost_low == total_cost_high
+            else f"{_est.format_cost(total_cost_low)} – {_est.format_cost(total_cost_high)}"
+        )
+    elif total_cost_mean > 0:
+        cost_label = f"≥ {_est.format_cost(total_cost_mean)}"
+    else:
+        cost_label = "—"
+    summary_cols[1].markdown(
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>Estimated cost</div>"
+        f"<div style='font-weight:600; font-size:1.2rem;'>{cost_label}</div>"
+        f"<div style='color:#8a8aa0; font-size:0.72rem;'>"
+        f"{'free for Ollama configs' if total_cost_mean == 0 else 'priced configs only'}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    summary_cols[2].markdown(
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>Time estimate</div>"
+        f"<div style='font-size:0.95rem;'>shown live on Runs once started</div>"
+        f"<div style='color:#8a8aa0; font-size:0.72rem;'>cold-start latency too noisy to forecast</div>",
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("📊 Estimate breakdown", expanded=False):
+        if rows:
+            st.dataframe(rows, width='stretch', hide_index=True)
+        if any_unknown:
+            st.caption(
+                "ⓘ Some configs have no pricing in LiteLLM's DB and no run "
+                "history yet. Run one trial of each new model to populate "
+                "empirical estimates."
+            )
+        st.caption(
+            "**Source legend** — `history`: empirical mean ± SD across past "
+            "completed trials of the same (provider, model). "
+            "`fallback`: LiteLLM pricing × ~1500 input + ~150 output tokens "
+            "per trial (rough). `free`: local Ollama. "
+            "`unknown`: no pricing available."
+        )
+
+
 def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
     """Render the experiment editor.
 
@@ -1062,6 +1174,9 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
             st.rerun()
 
     st.markdown("---")
+    # ── Pre-launch cost preview ──────────────────────────────────────────────
+    _render_launch_preview(dataset_choice)
+
     cta_label = {
         "edit": "💾 Save changes",
         "duplicate": "📋 Create duplicate",
