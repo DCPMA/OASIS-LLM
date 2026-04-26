@@ -126,63 +126,77 @@ def _ollama_capabilities(name: str) -> list[str]:
     return _ollama_show(name).get("capabilities") or []
 
 
-def _probe_ollama_model(model: str, *, disable_thinking: bool = True) -> dict:
-    """Run one rating-style call against an Ollama model. Used by the Probe button.
+def _probe_model(cfg: dict) -> dict:
+    """Run one rating-style call using the same code path as a real run.
 
-    Picks the first available approved-dataset image; falls back to a tiny
-    in-memory blank PNG if no DB image is available.
+    Builds an ad-hoc :class:`RunConfig` from the form's config dict and calls
+    :func:`oasis_llm.runner._call_model` against the first available
+    approved-dataset image (falling back to a 1x1 white PNG). This keeps the
+    probe honest — same provider plumbing, same prompt building, same JSON
+    schema strategy as production.
     """
-    import asyncio, base64, time
-    from litellm import acompletion
+    import asyncio, time
 
-    # Try to find a real image; fall back to a 1x1 white PNG.
-    img_url: str | None = None
+    # Find a real OASIS image to probe with.
+    img_id: str | None = None
     try:
         from oasis_llm import images as _img
-        # Try a known small set first; user can re-probe with a richer set later.
         for candidate in ("Spider 1", "Dancing 8", "Socks 1", "Wedding 12"):
             try:
-                img_url = _img.image_data_url(candidate)
+                _img.image_data_url(candidate)
+                img_id = candidate
                 break
             except Exception:
                 continue
-    except Exception:
-        img_url = None
-    if img_url is None:
-        png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        )
-        img_url = "data:image/png;base64," + base64.b64encode(png).decode()
+    except Exception as e:
+        return {"ok": False, "latency": 0.0, "finish": None,
+                "content": "", "content_len": 0, "error": f"setup failed: {e}"}
+    if img_id is None:
+        return {"ok": False, "latency": 0.0, "finish": None,
+                "content": "", "content_len": 0,
+                "error": "no probe image available (Spider 1/Dancing 8/Socks 1/Wedding 12 missing)"}
 
-    msgs = [
-        {"role": "system", "content": "You are a rating assistant. Output only an integer 1-7."},
-        {"role": "user", "content": [
-            {"type": "text", "text": "On a 1-7 scale, rate the arousal of this image. Output only the integer."},
-            {"type": "image_url", "image_url": {"url": img_url}},
-        ]},
-    ]
-    kwargs: dict = {
-        "model": f"ollama/{model}",
-        "messages": msgs,
-        "max_tokens": 64,
-        "timeout": 60,
-    }
-    if disable_thinking:
-        kwargs["think"] = False
+    # Strip UI-only fields and translate disable_thinking → extra_params.think.
+    payload = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    payload.pop("config_name", None)
+    payload.pop("config_name_auto", None)
+    if payload.get("provider") == "ollama" and payload.pop("disable_thinking", True):
+        extra = dict(payload.get("extra_params") or {})
+        extra.setdefault("think", False)
+        payload["extra_params"] = extra
+    else:
+        payload.pop("disable_thinking", None)
+    payload["name"] = "_probe"
+    payload["image_set"] = "pilot_30"
+    payload["samples_per_image"] = 1
+    payload.setdefault("dimensions", ["arousal"])
 
-    t0 = time.monotonic()
+    from oasis_llm.config import RunConfig
     try:
-        resp = asyncio.run(acompletion(**kwargs))
+        rc = RunConfig(**payload)
+    except Exception as e:
+        return {"ok": False, "latency": 0.0, "finish": None,
+                "content": "", "content_len": 0, "error": f"config invalid: {e}"}
+
+    from oasis_llm.runner import _call_model
+    t0 = time.monotonic()
+
+    async def _go():
+        # Use a short timeout cap to avoid hanging the UI.
+        rc2 = rc.model_copy(update={"request_timeout_s": min(rc.request_timeout_s, 90)})
+        return await _call_model(rc2, "arousal", img_id, sample_idx=0, trace_id="_probe")
+
+    try:
+        raw, latency_ms, in_tok, out_tok, cost, finish, _resp_id = asyncio.run(_go())
         dt = time.monotonic() - t0
-        content = resp.choices[0].message.content or ""
-        finish = resp.choices[0].finish_reason
         return {
-            "ok": bool(content.strip()),
+            "ok": bool((raw or "").strip()),
             "latency": dt,
             "finish": finish,
-            "content": content[:200],
-            "content_len": len(content),
+            "content": (raw or "")[:200],
+            "content_len": len(raw or ""),
             "error": None,
+            "in_tok": in_tok, "out_tok": out_tok, "cost": cost,
         }
     except Exception as e:
         return {
@@ -193,6 +207,17 @@ def _probe_ollama_model(model: str, *, disable_thinking: bool = True) -> dict:
             "content_len": 0,
             "error": f"{type(e).__name__}: {e}",
         }
+
+
+# Back-compat alias — old call sites pass just the model id for Ollama.
+def _probe_ollama_model(model: str, *, disable_thinking: bool = True) -> dict:
+    return _probe_model({
+        "provider": "ollama", "model": model,
+        "disable_thinking": disable_thinking,
+        "samples_per_image": 1, "temperature": 0.0,
+        "capture_reasoning": True, "cache_buster": False,
+        "max_concurrency": 1, "request_timeout_s": 60,
+    })
 
 
 def _models_for(provider: str, *, vision_only: bool = False, free_only: bool = False) -> tuple[list[str], str | None]:
@@ -566,25 +591,40 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                 )
                 st.caption(f"capabilities: {badges} · {vision_note} {think_note}")
 
-                pcol1, pcol2 = st.columns([1, 4])
-                if pcol1.button("🔬 Probe", key=f"cfgprobe_{i}",
-                                help="Run one rating call against an OASIS image and show the result."):
-                    with pcol2:
-                        with st.spinner(f"Probing {cfg['model']}…"):
-                            res = _probe_ollama_model(
-                                cfg["model"],
-                                disable_thinking=bool(cfg.get("disable_thinking", True)),
-                            )
-                        if res["ok"]:
-                            st.success(
-                                f"✅ {res['latency']:.1f}s · finish={res['finish']} · "
-                                f"content={res['content']!r}"
-                            )
-                        else:
-                            st.error(
-                                f"❌ {res['latency']:.1f}s · finish={res['finish']} · "
-                                f"content_len={res['content_len']} · {res.get('error', '')}"
-                            )
+            # ── Probe button (works for ALL providers) ─────────────────────
+            # Issues a single rating-style call via the same code path as a
+            # real run, so what you see here is what production will do.
+            pcol1, pcol2 = st.columns([1, 4])
+            if pcol1.button(
+                "🔬 Probe",
+                key=f"cfgprobe_{i}",
+                help=(
+                    "Run one rating call against an OASIS image using this "
+                    "exact config. Surfaces auth/model/schema errors before "
+                    "you launch the full experiment."
+                ),
+            ):
+                with pcol2:
+                    with st.spinner(f"Probing {cfg['provider']}/{cfg['model']}…"):
+                        res = _probe_model(cfg)
+                    extras = []
+                    if res.get("in_tok") is not None:
+                        extras.append(f"in={res['in_tok']}")
+                    if res.get("out_tok") is not None:
+                        extras.append(f"out={res['out_tok']}")
+                    if res.get("cost") is not None:
+                        extras.append(f"cost=${res['cost']:.5f}")
+                    extras_s = (" · " + " · ".join(extras)) if extras else ""
+                    if res["ok"]:
+                        st.success(
+                            f"✅ {res['latency']:.1f}s · finish={res['finish']} "
+                            f"· content={res['content']!r}{extras_s}"
+                        )
+                    else:
+                        st.error(
+                            f"❌ {res['latency']:.1f}s · finish={res['finish']} · "
+                            f"content_len={res['content_len']} · {res.get('error', '')}"
+                        )
 
             # Run id slug — auto from model, with optional override
             with st.expander(
@@ -900,6 +940,23 @@ def _render_detail(exp_id: str):
     cols[2].markdown(kpi("Total cost", f"${total_cost:.4f}"), unsafe_allow_html=True)
     pct = (100 * total_done / total_trials) if total_trials else 0
     cols[3].markdown(kpi("% complete", f"{pct:.1f}%"), unsafe_allow_html=True)
+
+    # OpenRouter :free daily-quota indicator — only shown when at least one
+    # config in this experiment is on the :free tier (1000/day shared cap).
+    has_free = any(
+        c.config_json.get("provider") == "openrouter"
+        and str(c.config_json.get("model", "")).rstrip().endswith(":free")
+        for c in e.configs
+    )
+    if has_free:
+        from oasis_llm.rate_limit import OPENROUTER_FREE_LIMITER, DAILY_LIMIT
+        used = OPENROUTER_FREE_LIMITER._refresh_daily_count(con_ro)
+        remaining = max(0, DAILY_LIMIT - used)
+        st.caption(
+            f"📡 OpenRouter `:free` daily quota — used **{used}** / {DAILY_LIMIT} "
+            f"(remaining: **{remaining}**, ≤20 rpm). "
+            f"Hitting the cap auto-cancels the affected config."
+        )
 
     if total_trials:
         st.progress(min(1.0, total_done / total_trials))
