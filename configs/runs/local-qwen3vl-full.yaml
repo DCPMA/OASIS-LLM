@@ -1,0 +1,11 @@
+name: local-qwen3vl-full
+provider: ollama
+model: qwen3-vl:8b
+modality: vision
+dimensions: [valence, arousal]
+image_set: full_900
+samples_per_image: 3
+max_concurrency: 2
+request_timeout_s: 180
+max_tokens: 256
+capture_reasoning: true

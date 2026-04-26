@@ -1,0 +1,54 @@
+---
+title: "OASIS-LLM"
+description: "Replicate the OASIS image-rating norms (Kurdi, Lozano, & Banaji, 2017) with vision-language models instead of MTurk participants."
+---
+
+OASIS-LLM is a small experimental harness that takes the **Open Affective Standardized Image Set (OASIS)** — a 900-image affective stimulus set normed by 822 MTurk workers on 7-point valence and arousal scales — and replays the rating procedure against modern vision-language models.
+
+The goal is **methodological**: figure out what it takes to get behaviorally meaningful ratings out of an LLM (prompt fidelity, sampling variance, cost, reasoning capture) and how those ratings compare to the human norms.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run a 100-trial pilot end-to-end in a few minutes.
+  </Card>
+  <Card title="Experiment design" icon="flask" href="/experiment-design">
+    7-point Likert valence and arousal, paper-verbatim instructions, sample
+    sizes.
+  </Card>
+  <Card title="Workflow" icon="diagram-project" href="/workflow">
+    Sequence and state diagrams for the async runner and trial lifecycle.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Every `RunConfig` field: types, defaults, what invalidates a run.
+  </Card>
+  <Card title="Discrepancies" icon="triangle-exclamation" href="/discrepancies">
+    How this replication diverges from Kurdi et al. (2017) and why.
+  </Card>
+  <Card title="Cost & latency" icon="dollar-sign" href="/cost-latency">
+    Real numbers from the Gemma-4-31B pilot and full-set extrapolations.
+  </Card>
+  <Card title="Reasoning capture" icon="brain" href="/reasoning-capture">
+    Why required-schema reasoning broke Gemma 4, and the prompt-rewrite fix.
+  </Card>
+  <Card title="Cache buster" icon="dice" href="/cache-buster">
+    Per-sample salts that force decoding variance at temperature=0.
+  </Card>
+</CardGroup>
+
+## What this project is
+
+- **A faithful re-implementation** of the OASIS rating procedure using paper-verbatim system prompts (image-centered instructions only, matching the main study).
+- **A reproducible run harness** built on DuckDB + LiteLLM + asyncio: configs are YAML, runs are idempotent, results are queryable.
+- **A discrepancy log.** We are explicit about where this replication diverges from the human protocol — see [Discrepancies](/discrepancies).
+
+## What this project is **not**
+
+- Not a benchmark leaderboard. We do not publish model rankings.
+- Not a claim that LLMs feel valence or arousal. The ratings are model behavior; what they correspond to in the model is an open question.
+- Not yet validated. Reliability and validity vs. the human norms are still being characterized.
+
+<Note>
+  Source paper: Kurdi, B., Lozano, S., &amp; Banaji, M. R. (2017). Introducing
+  the Open Affective Standardized Image Set (OASIS). *Behavior Research
+  Methods*, 49, 457–470.
+</Note>

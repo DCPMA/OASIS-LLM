@@ -1,0 +1,11 @@
+# Tiny non-smoke config for verification tests
+name: verify-gemma4
+provider: openrouter
+model: google/gemma-4-31b-it
+modality: vision
+dimensions: [valence]
+image_set: smoke_3
+samples_per_image: 1
+max_concurrency: 2
+request_timeout_s: 60
+max_tokens: 256

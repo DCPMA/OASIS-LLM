@@ -1,0 +1,78 @@
+---
+title: "Cache buster"
+description: "Per-sample salts that force decoding-path divergence at temperature=0 without breaking prefix caching."
+---
+
+## The problem
+
+Many provider defaults — and many self-hosted vLLM/SGLang setups — use `temperature=0` (greedy decoding). Under greedy decoding, two API calls with identical inputs produce **identical outputs**. So `samples_per_image: 5` collapses to one rating repeated five times: zero variance information, five times the cost.
+
+You could set `temperature > 0` to get sampling-noise variance, but:
+
+- That changes a real degree of freedom of the experiment.
+- Many open-weights models behave erratically at non-zero temperature on highly-structured tasks.
+- You lose comparability to deterministic baselines.
+
+## The fix: per-sample salt
+
+When `cache_buster: true` (the default), the runner appends a 10-character salt to the **end** of the user turn:
+
+```python
+salt = hashlib.sha256(
+    f"{cfg.name}|{image_id}|{dimension}|{sample_idx}".encode()
+).hexdigest()[:10]
+usr_p = f"{usr_p}\n\n[trial-id: {salt}]"
+```
+
+The salt is deterministic in `(run_name, image_id, dimension, sample_idx)`, so:
+
+- Resuming a run produces the same salts, same prompts, same `prompt_hash`.
+- Each `sample_idx` produces a different decoding path, even at `temperature=0`.
+- Across runs of the same experiment, sample 0 always gets the same salt.
+
+## Why it works
+
+Two reasons.
+
+**1. The salt forces the model down a different decoding path.** Greedy decoding is deterministic in the _input_, not deterministic across inputs. A 10-char hex string is enough to perturb the attention pattern over the prefix and generally produces a different rating than the unsalted prompt would, even though the meaningful instruction content is identical.
+
+**2. It's KV-cache friendly.** The salt is appended **after** the image and after the original instruction text. Providers that do prefix caching (Anthropic, OpenAI structured outputs, vLLM, SGLang) cache the long prefix — image data URL plus paper-verbatim instructions — and only have to recompute the small tail that includes the salt. So:
+
+- Across the 5 sample_idx values for one (image, dimension), the expensive prefix is cached once and reused.
+- The salt is the only thing that changes per sample.
+
+If we put the salt at the _start_ of the user turn or in the system message, prefix caching would invalidate every call.
+
+## Limitations
+
+<Warning>
+  The cache buster does not give you human-scale rating spread. It can't.
+</Warning>
+
+We empirically compared `cache_buster=false` (v1) and `cache_buster=true` (v2) on the same Gemma-4-31B pilot. The mean per-cell SD moved from roughly **0.10** to **0.07** rating points — and even those non-zero numbers come from occasional parsing edge cases, not from the salt itself.
+
+The deeper issue is the **output space is too coarse**. The rating space is 7 integers. Two decoding paths that disagree about which integer is most likely will produce different ratings; two paths that agree on the argmax will produce identical ratings even if their full distributions differ. At `temperature=0` you only see the argmax. So:
+
+- If the model is _confident_, the salt does nothing — argmax doesn't move.
+- If the model is _uncertain_, the salt occasionally tips the argmax to a neighbor — small SD.
+- You will never see the kind of 1.0–1.5 rating-point SDs that 100 humans produce on an ambiguous image.
+
+## When to use it
+
+- **Default on.** It's free (one extra `sha256` per trial, the tail goes through the cache untouched), and it gives you _some_ information when you'd otherwise have zero.
+- **Combine with non-zero temperature** if you actually need calibrated model uncertainty. `temperature: 0.7 + cache_buster: true` is reasonable for variance-focused runs.
+- **Keep it on across resumes.** Toggling `cache_buster` invalidates the canonical hash, so flipping mid-run requires a new `name`.
+
+## Implementation reference
+
+In `_build_prompts`:
+
+```python
+if cfg.cache_buster and image_id is not None and sample_idx is not None:
+    salt = hashlib.sha256(
+        f"{cfg.name}|{image_id}|{dimension}|{sample_idx}".encode()
+    ).hexdigest()[:10]
+    usr_p = f"{usr_p}\n\n[trial-id: {salt}]"
+```
+
+The salt is included in `prompt_hash` so you can audit which prompt actually went out the door. If you ever need to compare salted vs. unsalted runs, name them differently and let the canonical hash protect you from accidental mixing.

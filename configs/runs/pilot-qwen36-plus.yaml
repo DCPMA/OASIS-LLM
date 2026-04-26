@@ -1,0 +1,11 @@
+name: pilot-qwen36-plus
+provider: openrouter
+model: qwen/qwen3.6-plus
+modality: vision
+dimensions: [valence, arousal]
+image_set: pilot_30
+samples_per_image: 5
+max_concurrency: 4
+request_timeout_s: 60
+max_tokens: 256
+capture_reasoning: true

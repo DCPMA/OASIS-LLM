@@ -1,0 +1,83 @@
+---
+title: "Quickstart"
+description: "Run a 100-trial pilot end-to-end and inspect the results."
+---
+
+<Steps>
+  <Step title="Set provider keys">
+    OASIS-LLM routes through [LiteLLM](https://docs.litellm.ai/), so any provider that LiteLLM supports works. For OpenRouter:
+
+    ```bash
+    export OPENROUTER_API_KEY=sk-or-...
+    ```
+
+    For local Ollama, no key is needed — set `api_base: http://localhost:11434` in the config.
+
+  </Step>
+
+  <Step title="Run a pilot">
+    The shipped pilot uses 10 images × 2 dimensions × 5 samples = **100 trials** against Gemma-4-31B via OpenRouter.
+
+    ```bash
+    uv run oasis-llm run configs/runs/pilot10-gemma4-31b.yaml
+    ```
+
+    The runner is idempotent. Re-running picks up exactly where it left off — pending and previously failed trials (with `attempts < 3`) are re-claimed; completed ones are skipped.
+
+  </Step>
+
+  <Step title="Check status">
+    ```bash
+    uv run oasis-llm status
+    uv run oasis-llm status pilot10-gemma4-31b
+    ```
+
+    Shows per-run counts of `done` / `pending` / `failed` trials and total `cost_usd` so far.
+
+  </Step>
+
+  <Step title="Open the dashboard">
+    ```bash
+    uv run oasis-llm dashboard
+    ```
+
+    Streamlit dashboard with per-image rating distributions, reasoning text, latency histograms, and cost breakdowns.
+
+  </Step>
+
+  <Step title="Export to CSV">
+    ```bash
+    uv run oasis-llm export pilot10-gemma4-31b outputs/pilot10.csv
+    ```
+
+    Dumps every `done` trial — one row per (image, dimension, sample) — with rating, raw response, reasoning, latency, tokens, cost.
+
+  </Step>
+</Steps>
+
+## Smoke-test a new config
+
+Before paying for a full pilot, validate that prompts, parsing, and provider auth all work end-to-end:
+
+```bash
+uv run oasis-llm smoke configs/runs/your-config.yaml
+```
+
+This forces `image_set=smoke_3`, `dimensions=[valence]`, and `samples_per_image=1` regardless of what's in the YAML — three trials, total cost typically &lt; \$0.001.
+
+<Tip>
+  The smoke run prefixes the run name with `smoke-`, so it never collides with
+  your real run in the database.
+</Tip>
+
+## Where things live
+
+| What                | Where                                   |
+| ------------------- | --------------------------------------- |
+| Run configs         | `configs/runs/*.yaml`                   |
+| Trial-level results | `data/llm_runs.duckdb` (table `trials`) |
+| Run-level metadata  | `data/llm_runs.duckdb` (table `runs`)   |
+| Image stimuli       | `OASIS/images/*.jpg`                    |
+| Human norms         | `data/derived/OASIS_data_long.csv`      |
+
+See [Configuration](/configuration) for every field you can set in a YAML config.

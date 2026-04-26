@@ -1,0 +1,85 @@
+---
+title: "Discrepancies"
+description: "Where this LLM replication diverges from Kurdi, Lozano, & Banaji (2017), and what each divergence costs you."
+---
+
+This page is the honest disclaimer. We try to keep this list complete and up to date — if you spot a divergence not listed here, it's a bug.
+
+## 1. Same-model rater pool (vs. independent human raters)
+
+|                              | Paper                                       | OASIS-LLM                                           |
+| ---------------------------- | ------------------------------------------- | --------------------------------------------------- |
+| Who rates valence vs arousal | Different participants (between-subject)    | Same model weights — but separate stateless calls   |
+| Within-call context          | One dimension per session                   | One dimension per call (no cross-dimension context) |
+| Cross-trial state            | Per-participant carryover within their list | None — every trial is a fresh API call              |
+
+**Important clarification.** Each trial is a single stateless API call with exactly one `dimension`. The model never sees a valence and an arousal question in the same conversation. There is no anchoring path between dimensions inside a session, because there is no session.
+
+The remaining divergence is at the _population_ level: the paper drew valence raters and arousal raters from disjoint pools of humans, while we draw both from the same model (same weights, same provider, same config). If that model encodes valence and arousal as a shared internal "affect" representation, ratings of the two dimensions on the same image will share systematic bias even though no individual call sees both.
+
+**What this costs you:** correlations between LLM valence and LLM arousal cannot be cleanly attributed to "two raters agreeing about the world" — they may also reflect "one rater computing both from the same internal feature". Compare model–human Spearman ρ separately per dimension to keep this clean.
+
+<Tip>
+  If you want stricter parity with the paper's population separation, run
+  *different* models for valence and arousal (e.g. Gemma for valence, Qwen for
+  arousal) and treat them as independent rater populations.
+</Tip>
+
+## 2. Far smaller N per cell
+
+|                                | Paper | OASIS-LLM (default)        |
+| ------------------------------ | ----- | -------------------------- |
+| Ratings per (image, dimension) | ~100  | 5 (`samples_per_image: 5`) |
+
+By Spearman-Brown, going from k=100 to k=5 raters drops the _cell-mean_ reliability ceiling roughly from 0.98 to 0.76 for valence and from 0.93 to ~0.40 for arousal — and that's assuming the model has the same noise structure as humans, which is a strong assumption.
+
+**What this costs you:** you cannot read individual cell means as precise estimates. Treat them as 5-sample point estimates and quantify SD per cell. Bump `samples_per_image` upward (it's outside the canonical hash) when you need tighter cells.
+
+## 3. No randomized list / no order randomization
+
+|                | Paper                  | OASIS-LLM                                                               |
+| -------------- | ---------------------- | ----------------------------------------------------------------------- |
+| List structure | 4 lists × 225 images   | None — every model sees every image                                     |
+| Order          | Per-participant random | Trial scheduling order (by `attempts, sample_idx, image_id, dimension`) |
+
+Each model conversation is **single-shot per trial**: a fresh API call per (image, dimension, sample_idx). There is no "session" carrying state across images, so order effects within the model are essentially absent — the trade is that we also lose any habituation/calibration humans get from earlier trials.
+
+**What this costs you:** you cannot study order effects, list effects, or fatigue. You also cannot replicate any anchor-based variance that comes from "rater has seen N other images already".
+
+## 4. Rating-only vs. rating + reasoning
+
+|        | Paper          | OASIS-LLM                                                        |
+| ------ | -------------- | ---------------------------------------------------------------- |
+| Output | Single integer | Integer + one-sentence reasoning (when `capture_reasoning=true`) |
+
+Asking for reasoning is a deliberate change to the task. It (a) gives us text we can audit, (b) pushes the model toward verbalizing the dimension, and (c) plausibly changes the rating itself by giving the model "thinking-out-loud" tokens.
+
+**What this costs you:** you cannot fairly compare `capture_reasoning=true` runs to the human single-integer protocol on equal footing. For strict parity, set `capture_reasoning: false` — the harness then enforces strict-schema `{rating: int}` output.
+
+See [Reasoning capture](/reasoning-capture) for the full prompt diff.
+
+## 5. Single-pass image, no fixation, no timing
+
+The human protocol presents the image with a fixation cross and per-trial timing. We send the image once as a base64 data URL and let the model attend to it however it does internally. There is no analogue of "looking at the image for N seconds before responding".
+
+**What this costs you:** any effects driven by viewing time, eye-movement patterns, or attention allocation are out of scope.
+
+## 6. Provider determinism vs. human variance
+
+The paper's variance is real human between-rater variance. Our variance has two distinct sources mixed together:
+
+- **Sampling-noise variance** (when `temperature > 0`): real stochasticity in the decode.
+- **Cache-buster variance** (when `temperature = 0`, the default for many providers): forced by appending a salt to the user prompt; see [Cache buster](/cache-buster). This is not the same noise process as humans, and at greedy decoding the rating space is too coarse (7 integers) for it to produce human-scale spread.
+
+**What this costs you:** SDs from `temperature=0 + cache_buster=true` runs are a _floor_ on model uncertainty, not a calibrated estimate of it. To get something more comparable to human between-rater spread, set a non-zero temperature and crank `samples_per_image`.
+
+## Summary table
+
+| Divergence                  | Severity for cell-mean estimates | Severity for variance estimates |
+| --------------------------- | -------------------------------- | ------------------------------- |
+| Same-model rater pool       | Low                              | Low (call-level independent)    |
+| N=5 vs N=100                | High                             | High                            |
+| No list/order randomization | Low                              | Medium                          |
+| Reasoning capture           | Medium                           | Medium                          |
+| No fixation/timing          | Low                              | Low                             |
+| Determinism                 | Low                              | High                            |

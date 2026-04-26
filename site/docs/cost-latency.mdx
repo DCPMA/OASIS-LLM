@@ -1,0 +1,91 @@
+---
+title: "Cost & latency"
+description: "Real numbers from the Gemma-4-31B pilot, full-set extrapolations, and how cost is captured."
+---
+
+## Pilot numbers
+
+The shipped pilot config is 10 images × 2 dimensions × 5 samples = **100 trials** through `google/gemma-4-31b-it` on OpenRouter, vision modality, `capture_reasoning: true`, `cache_buster: true`.
+
+| Metric                             | Value         |
+| ---------------------------------- | ------------- |
+| Trials completed                   | 100           |
+| Total cost                         | **\$0.00867** |
+| Average latency                    | 8.2 s / trial |
+| p50 latency                        | 5.7 s         |
+| Throughput at `max_concurrency: 4` | ~0.49 trial/s |
+
+That's roughly **\$0.0000867 per trial** including the image upload cost (the image data URL dominates input tokens) and a one-sentence reasoning string in the output.
+
+## Full-set extrapolation
+
+Same model, scaled to `image_set: full_900` × 2 dimensions × 5 samples = **9,000 trials**:
+
+| Metric                             | Estimate                        |
+| ---------------------------------- | ------------------------------- |
+| Total cost                         | **~\$0.78**                     |
+| Wall time at `max_concurrency: 4`  | **~2 hr**                       |
+| Wall time at `max_concurrency: 16` | ~30 min (provider-rate-limited) |
+
+This is the cheap path. Frontier models (GPT-5-class, Claude Opus 4.x, Gemini 2.5 Pro) run roughly **20–100×** more expensive per trial. Plan accordingly:
+
+| Model class                           | Pilot (100 trials) | Full set (9,000 trials) |
+| ------------------------------------- | ------------------ | ----------------------- |
+| Open mid-size (Gemma 4 31B, Qwen3-VL) | ~\$0.01            | ~\$1                    |
+| Open large / frontier-cheap           | ~\$0.10–0.30       | ~\$10–30                |
+| Frontier closed                       | ~\$1–3             | ~\$80–300               |
+
+<Note>
+  The full-set numbers extrapolate from observed pilot per-trial cost; they're
+  estimates, not quotes. Run a `smoke` first against any new model to validate
+  cost capture before committing.
+</Note>
+
+## How cost is captured
+
+Cost capture is a two-tier fallback in `_call_model`:
+
+<Steps>
+  <Step title="LiteLLM cost lookup (primary)">
+    `litellm.completion_cost(completion_response=resp)` consults LiteLLM's price table for the resolved model id. Works for first-party Anthropic / OpenAI / Google models and most well-known open-weights routes.
+  </Step>
+  <Step title="OpenRouter native usage.cost (fallback)">
+    For OpenRouter, the runner sets:
+
+    ```python
+    call_kwargs.setdefault("extra_body", {})
+    call_kwargs["extra_body"].setdefault("usage", {"include": True})
+    ```
+
+    OpenRouter then returns the actual billed cost in `resp.usage.cost`. The runner reads it through three different access paths (attribute, `model_extra`, `__dict__`) to handle pydantic-version variations in the LiteLLM response object.
+
+  </Step>
+  <Step title="NULL (Ollama, local providers)">
+    No price source available; `cost_usd` is `NULL`. Latency and tokens are still captured.
+  </Step>
+</Steps>
+
+## Latency and concurrency
+
+`max_concurrency` is the asyncio semaphore size; effective throughput is
+
+$$
+\text{throughput} \approx \min\left( \frac{\text{max\_concurrency}}{\bar{\text{latency}}},\ \text{provider rate limit} \right)
+$$
+
+For the Gemma-4-31B pilot at 8.2 s mean latency, `max_concurrency: 4` lands at roughly 0.49 trial/s, which matches the observed numbers. Bumping concurrency further usually hits OpenRouter per-key rate limits before it speeds anything up — start at 4 and only raise if you see queueing under that.
+
+<Tip>
+  `max_concurrency` is excluded from `canonical_hash`, so you can tune it
+  between resumes without invalidating the run.
+</Tip>
+
+## Budget worksheet
+
+```text
+trials       = N_images × N_dims × samples_per_image
+cost_total   ≈ trials × cost_per_trial_observed_in_smoke
+wall_time    ≈ trials × mean_latency / max_concurrency
+```
+
+For any new model, run `oasis-llm smoke <config>` (3 trials, &lt;\$0.001 typical) and read off `cost_per_trial` from `oasis-llm status`. Multiply by your full trial count before launching the real run.

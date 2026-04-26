@@ -1,0 +1,114 @@
+---
+title: "Reasoning capture"
+description: "Why required-schema reasoning broke Gemma 4, and how the prompt-rewrite fix works."
+---
+
+`capture_reasoning: true` (the default) asks the model for a `{rating, reasoning}` JSON object on every trial. This sounds trivial. Implementing it across providers without breaking smaller models was not.
+
+## The Gemma 4 saga
+
+We tried three approaches before landing on the current one.
+
+<Steps>
+  <Step title="Approach 1 — required-reasoning JSON schema (broken)">
+    Initial implementation used LiteLLM's `response_format` with a strict JSON schema where `reasoning` was in the `required` array:
+
+    ```python
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "rating",
+            "schema": {"properties": {"rating": ..., "reasoning": ...},
+                       "required": ["rating", "reasoning"], "strict": True},
+        },
+    }
+    ```
+
+    On Gemma-4-31B-IT this triggered a degenerate output loop — long whitespace-only completions ending in `length`-truncation and unparseable output. Same model on the same provider, same image, same prompt, no required-reasoning: rates fine.
+
+  </Step>
+
+  <Step title="Approach 2 — optional-reasoning JSON schema (silent loss)">
+    We made `reasoning` optional in the schema (only `rating` required). The whitespace loops stopped, but Gemma now ignored the field entirely — every completion was `{"rating": 5}` with no reasoning string. The system prompt still said "respond with a single integer", and the model took that literally.
+  </Step>
+
+  <Step title="Approach 3 — prompt rewrite + drop response_format (current)">
+    The current path rewrites the prompts and drops `response_format` entirely when `capture_reasoning=true`. Free-form output goes through `_parse_rating`'s JSON-then-regex fallback.
+  </Step>
+</Steps>
+
+## What `capture_reasoning=true` actually does
+
+Three coordinated changes in the runner:
+
+**1. System-prompt rewrite (in `_build_prompts`).** The paper's "respond with a single integer" instruction is replaced with a JSON-with-reasoning instruction:
+
+```python
+sys_p = sys_p.replace(
+    "Please respond with a single integer from 1 to 7.",
+    'Respond with a JSON object containing your integer `rating` (1-7) '
+    'and a brief one-sentence `reasoning` (<=30 words) describing what '
+    'about the image drove the rating.\n'
+    'Example: {"rating": 5, "reasoning": "A bright sunset evokes mild positive affect."}',
+)
+```
+
+**2. User-prompt suffix.** A "respond ONLY with a JSON object" instruction is appended to the user turn, with the exact shape inline.
+
+**3. No strict schema (in `_call_model`).**
+
+```python
+if cfg.capture_reasoning:
+    resp = await acompletion(**call_kwargs)          # no response_format
+else:
+    # strict {rating: int} schema with try/except fallback
+    ...
+```
+
+With `capture_reasoning: false` the harness flips back to a strict `response_format` enforcing `{rating: int}` only — that small schema is reliable across every model we've tried.
+
+## Optional-but-not-required schema
+
+Even when we keep `RATING_SCHEMA` available (`capture_reasoning=true`), the schema marks only `rating` as required:
+
+```python
+RATING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rating":    {"type": "integer", "minimum": 1, "maximum": 7, ...},
+        "reasoning": {"type": "string",  ...},
+    },
+    "required": ["rating"],
+    "additionalProperties": False,
+}
+```
+
+This matters for the `capture_reasoning=false` path, where we _do_ enforce the schema strictly via `_schema_for(cfg)` (which strips `reasoning` entirely). Marking `reasoning` required under strict mode is what triggered the Gemma whitespace loops in the first place — keeping it optional is a defense-in-depth choice.
+
+## Parsing fallback
+
+`_parse_rating` is forgiving by design. Given the model's raw text:
+
+<Steps>
+  <Step title="Try strict json.loads">
+    Works when the model returns a clean JSON object.
+  </Step>
+  <Step title="Extract first { ... } substring">
+    Handles fenced output like ` ```json\n{...}\n``` ` and prefixed prose. Slices from the first `{` to the last `}` and re-parses.
+  </Step>
+  <Step title="Regex first integer 1–7">
+    Last resort: pulls the first standalone digit 1–7 out of the text. Reasoning is lost in this branch (returned as `None`).
+  </Step>
+</Steps>
+
+A trial reaches `status='failed'` only if all three fail (or the model returned an empty completion). That's tracked in the `error` column for postmortem.
+
+## Recommendations
+
+<Warning>
+  For strict comparison to the human OASIS norms, set `capture_reasoning:
+  false`. Asking for reasoning is a deliberate task change — see
+  [Discrepancies](/discrepancies#4-rating-only-vs-rating-reasoning).
+</Warning>
+
+For exploratory work (which is most of what we do), `capture_reasoning: true` is worth it. The reasoning text is genuinely useful for spotting cases where the model is rating the _content_ differently than you'd expect — e.g. anthropomorphizing an alarm clock as "stressful" because it implies "waking up early".

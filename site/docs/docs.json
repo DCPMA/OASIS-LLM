@@ -1,0 +1,46 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "OASIS-LLM",
+  "colors": {
+    "primary": "#7c3aed",
+    "light": "#a78bfa",
+    "dark": "#5b21b6"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["index", "quickstart"]
+          },
+          {
+            "group": "Experiment",
+            "pages": [
+              "experiment-design",
+              "image-set",
+              "discrepancies",
+              "cost-latency"
+            ]
+          },
+          {
+            "group": "Implementation",
+            "pages": [
+              "workflow",
+              "configuration",
+              "reasoning-capture",
+              "cache-buster"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": ["glossary"]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+name: smoke-dataset-curated
+provider: ollama
+model: qwen3.5:latest
+modality: vision
+dimensions: [valence]
+image_set: test-curate
+samples_per_image: 1
+max_concurrency: 2
+request_timeout_s: 180
+max_tokens: 256
+capture_reasoning: false
+cache_buster: false
+extra_params:
+  think: false

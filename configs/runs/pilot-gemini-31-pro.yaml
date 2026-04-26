@@ -1,0 +1,11 @@
+name: pilot-gemini-31-pro
+provider: openrouter
+model: google/gemini-3.1-pro-preview
+modality: vision
+dimensions: [valence, arousal]
+image_set: pilot_30
+samples_per_image: 5
+max_concurrency: 4
+request_timeout_s: 90
+max_tokens: 256
+capture_reasoning: true

@@ -1,48 +1,7 @@
-options(repos = c(CRAN = "https://cran.r-project.org"))
-
-load_package <- function(package) {
-     if (!require(package, character.only = TRUE)) {
-          install.packages(package)
-          library(package, character.only = TRUE)
-     }
-}
-
-get_script_dir <- function() {
-     cmd_args <- commandArgs(trailingOnly = FALSE)
-     file_arg <- "--file="
-     script_path <- sub(file_arg, "", cmd_args[grep(file_arg, cmd_args)])
-
-     if (length(script_path) > 0) {
-          return(dirname(normalizePath(script_path[1])))
-     }
-
-     frame_file <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-     if (!is.null(frame_file)) {
-          return(dirname(normalizePath(frame_file)))
-     }
-
-     getwd()
-}
-
-load_package("nlme")
-load_package("lme4")
-load_package("psych")
-load_package("lmerTest")
-load_package("car")
-
-script_dir <- get_script_dir()
-repo_root <- normalizePath(file.path(script_dir, ".."), mustWork = FALSE)
-data_path <- file.path(repo_root, "data", "raw", "OASIS_data.csv")
-data_long_path <- file.path(repo_root, "data", "derived", "OASIS_data_long.csv")
-iaps_path <- file.path(repo_root, "data", "raw", "AllSubjects_1-20.txt")
-
-if (!exists("data", inherits = FALSE)) {
-     data <- read.csv(data_path, header = TRUE, sep = ",")
-}
-
-if (!is.data.frame(data)) {
-     stop("`data` must be a data frame. Load OASIS_data.csv before sourcing OASIS.R.")
-}
+if (!require(nlme)) {install.packages("nlme"); require(nlme)}
+if (!require(lme4)) {install.packages("lme4"); require(lme4)}
+if (!require(psych)) {install.packages("psych"); require(psych)}
+if (!require(lmerTest)) {install.packages("lmerTest"); require(lmerTest)}
 
 # Descriptives ------------------------------------------------------------
 
@@ -160,7 +119,7 @@ abline(v = 4, lty = 2)
 
 # Valence and arousal by image category -----------------------------------
 
-data_long <- read.csv(data_long_path, header = TRUE, sep = ",")
+data_long <- read.csv("OASIS_data_long.csv", header = TRUE, sep = ",")
 
 categories <- data_long$category[data_long$ID == data_long$ID[1]]
 themes <- data_long$theme[data_long$ID == data_long$ID[1]]
@@ -419,7 +378,7 @@ valencemen2_means <- apply(valencemen2[which(colnames(valencemen2) == "I1"):whic
 
 valencemen2_N <- vector()
 i <- NULL
-for (i in which(colnames(valencemen2) == "I1"):which(colnames(valencemen2) == "I900")) {
+for (i in which(colnames(valencemen2) == "I1"):which(colnames(data) == "I900")) {
      valencemen2_N[i] <- length(valencemen2[, i][is.na(valencemen2[, i]) == FALSE])
 }
 valencemen2_N <- valencemen2_N[is.na(valencemen2_N) == FALSE]
@@ -436,7 +395,7 @@ valencewomen2_means <- apply(valencewomen2[which(colnames(valencewomen2) == "I1"
 
 valencewomen2_N <- vector()
 i <- NULL
-for (i in which(colnames(valencewomen2) == "I1"):which(colnames(valencewomen2) == "I900")) {
+for (i in which(colnames(valencewomen2) == "I1"):which(colnames(data) == "I900")) {
      valencewomen2_N[i] <- length(valencewomen2[, i][is.na(valencewomen2[, i]) == FALSE])
 }
 valencewomen2_N <- valencewomen2_N[is.na(valencewomen2_N) == FALSE]
@@ -461,7 +420,7 @@ arousalmen2_means <- apply(arousalmen2[which(colnames(arousalmen2) == "I1"):whic
 
 arousalmen2_N <- vector()
 i <- NULL
-for (i in which(colnames(arousalmen2) == "I1"):which(colnames(arousalmen2) == "I900")) {
+for (i in which(colnames(arousalmen2) == "I1"):which(colnames(data) == "I900")) {
      arousalmen2_N[i] <- length(arousalmen2[, i][is.na(arousalmen2[, i]) == FALSE])
 }
 arousalmen2_N <- arousalmen2_N[is.na(arousalmen2_N) == FALSE]
@@ -478,7 +437,7 @@ arousalwomen2_means <- apply(arousalwomen2[which(colnames(arousalwomen2) == "I1"
 
 arousalwomen2_N <- vector()
 i <- NULL
-for (i in which(colnames(arousalwomen2) == "I1"):which(colnames(arousalwomen2) == "I900")) {
+for (i in which(colnames(arousalwomen2) == "I1"):which(colnames(data) == "I900")) {
      arousalwomen2_N[i] <- length(arousalwomen2[, i][is.na(arousalwomen2[, i]) == FALSE])
 }
 arousalwomen2_N <- arousalwomen2_N[is.na(arousalwomen2_N) == FALSE]
@@ -501,8 +460,7 @@ sort(abs(gendAro2$residuals), decreasing = TRUE)[1:10]
 
 # Comparison with IAPS ----------------------------------------------------
 # Note: If you would like to run this code, please obtain the data file from the Center for Emotion and Attention (CSEA) at the University of Florida
-if (file.exists(iaps_path)) {
-IAPS <- read.delim(iaps_path)
+IAPS <- read.delim("AllSubjects_1-20.txt")
 head(IAPS)
 cor(IAPS$valmn, IAPS$aromn)
 cor.test(IAPS$valmn, IAPS$aromn)
@@ -579,9 +537,6 @@ text(2, 8.5, bquote(R == .(format(round(cor(IAPS$valmn, IAPS$aromn), 3)))))
 abline(h = 5, lty = 2)
 abline(v = 5, lty = 2)
 par(op)
-} else {
-message("Skipping IAPS analyses: AllSubjects_1-20.txt not found.")
-}
 
 
 # Descriptives by category ------------------------------------------------

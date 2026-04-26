@@ -1,0 +1,82 @@
+---
+title: "Glossary"
+description: "Short definitions for the terms used throughout this documentation."
+---
+
+<AccordionGroup>
+  <Accordion title="Valence">
+    The level of positivity vs. negativity intrinsic to a stimulus. In OASIS, rated on a 7-point scale from "Very negative" to "Very positive". One of the two canonical affective dimensions in dimensional models of emotion (Russell, 1980).
+  </Accordion>
+
+<Accordion title="Arousal">
+  The level of intensity / activation / excitement intrinsic to a stimulus,
+  treated as orthogonal to valence. In OASIS, rated 1 ("Very low" — calm,
+  sleepy) to 7 ("Very high" — stimulating, frenzied).
+</Accordion>
+
+<Accordion title="OASIS">
+  Open Affective Standardized Image Set. 900 open-access color images normed by
+  Kurdi, Lozano, &amp; Banaji (2017) on 7-point valence and arousal scales using
+  ~822 MTurk participants. Designed as a CC-licensed alternative to the IAPS.
+</Accordion>
+
+<Accordion title="ICC(2,k)">
+  Two-way random-effects, average-measures intraclass correlation coefficient.
+  Used in the OASIS paper to quantify reliability of the *cell-mean* rating
+  across `k` raters per image. ICC(2,k) ≈ 0.984 for valence, ≈ 0.929 for arousal
+  at the paper's k ≈ 100. Higher than ICC(2,1) because averaging across raters
+  cancels per-rater noise.
+</Accordion>
+
+  <Accordion title="Spearman-Brown prophecy">
+    Formula for predicting reliability when changing the number of raters from `k` to `k'`:
+
+    $$
+    \rho_{k'} = \frac{(k'/k) \cdot \rho_k}{1 + ((k'/k) - 1) \cdot \rho_k}
+    $$
+
+    Used here to extrapolate what reliability we should expect at `samples_per_image=5` if model ratings have human-like noise structure.
+
+  </Accordion>
+
+<Accordion title="Cronbach's alpha">
+  Internal-consistency reliability for a multi-item scale; also a special case
+  of ICC for binary-coded raters. The OASIS paper reports both alpha and
+  ICC(2,k); they are very close at large k.
+</Accordion>
+
+<Accordion title="KV cache (prefix caching)">
+  Transformer inference optimization where the key/value tensors for a fixed
+  prompt prefix are computed once and reused across calls that share that
+  prefix. Anthropic, OpenAI, vLLM, and SGLang all implement some form of this.
+  The OASIS-LLM cache buster places its per-sample salt at the *end* of the user
+  turn so that the long image+instruction prefix stays cacheable.
+</Accordion>
+
+<Accordion title="JSON schema strict mode">
+  Provider-side enforcement of structured output: the model is constrained at
+  decode time to emit tokens that satisfy a JSON schema. Available on OpenAI
+  (`response_format: json_schema, strict: true`), Anthropic (tools), and a
+  growing set of open-weights stacks. Powerful but brittle on small models when
+  the schema requires multiple fields — see [Reasoning
+  capture](/reasoning-capture).
+</Accordion>
+
+  <Accordion title="Between-subject vs. within-subject">
+    **Between-subject:** each participant contributes data to one condition only. Removes within-rater contamination at the cost of needing more raters. The OASIS paper used between-subject for valence vs. arousal.
+
+    **Within-subject:** each participant contributes data to all conditions. More statistical power per rater but introduces order, anchoring, and contamination concerns. OASIS-LLM defaults to within-subject (one model rates both dimensions per image). See [Discrepancies](/discrepancies#1-within-subject-vs-between-subject).
+
+  </Accordion>
+
+<Accordion title="Cache buster (this project)">
+  Per-trial salt appended to the user prompt, deterministic in `(run_name,
+  image_id, dimension, sample_idx)`. Forces decoding-path divergence at
+  `temperature=0` without breaking prefix caching. See [Cache
+  buster](/cache-buster).
+</Accordion>
+
+  <Accordion title="Canonical hash (this project)">
+    `sha256(model_dump(exclude={name, max_concurrency, request_timeout_s, max_retries, samples_per_image}))[:16]`. Stored alongside each run so resumption with a changed model / prompt / dimension list is rejected. See [Configuration](/configuration#canonical-hash).
+  </Accordion>
+</AccordionGroup>

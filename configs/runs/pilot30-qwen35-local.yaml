@@ -1,0 +1,14 @@
+name: pilot30-qwen35-local
+provider: ollama
+model: qwen3.5:latest
+modality: vision
+dimensions: [valence, arousal]
+image_set: pilot_30
+samples_per_image: 5
+max_concurrency: 2
+request_timeout_s: 180
+max_tokens: 256
+capture_reasoning: false
+cache_buster: true
+extra_params:
+  think: false

@@ -1,0 +1,11 @@
+name: smoke-ollama-qwen3vl
+provider: ollama
+model: qwen3-vl:8b
+modality: vision
+dimensions: [valence, arousal]
+image_set: smoke_3
+samples_per_image: 1
+max_concurrency: 2
+request_timeout_s: 120
+max_tokens: 256
+capture_reasoning: true

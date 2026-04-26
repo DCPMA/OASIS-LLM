@@ -1,0 +1,11 @@
+name: smoke-openrouter-gemma4
+provider: openrouter
+model: google/gemma-4-31b-it
+modality: vision
+dimensions: [valence, arousal]
+image_set: smoke_3
+samples_per_image: 1
+max_concurrency: 2
+request_timeout_s: 60
+max_tokens: 256
+capture_reasoning: true

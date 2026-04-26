@@ -1,0 +1,80 @@
+---
+title: "Configuration"
+description: "Every RunConfig field — type, default, and how it interacts with run resumption."
+---
+
+A run config is a YAML file matched against `RunConfig` in `src/oasis_llm/config.py`.
+
+## Example
+
+```yaml configs/runs/pilot10-gemma4-31b.yaml
+name: pilot10-gemma4-31b
+provider: openrouter
+model: google/gemma-4-31b-it
+modality: vision
+dimensions: [valence, arousal]
+image_set: pilot_10
+samples_per_image: 5
+max_concurrency: 4
+request_timeout_s: 60
+max_tokens: 256
+capture_reasoning: true
+```
+
+## Field reference
+
+| Field                    | Type          | Default                  | Description                                                                                                                                     |
+| ------------------------ | ------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                   | str           | _(required)_             | Run identifier and `run_id` primary key. Must be unique unless resuming. **Excluded from `canonical_hash`.**                                    |
+| `provider`               | enum          | _(required)_             | One of `openrouter`, `ollama`, `anthropic`, `google`, `openai`. Selects auth + default API base.                                                |
+| `model`                  | str           | _(required)_             | LiteLLM-style model id (e.g. `google/gemma-4-31b-it`).                                                                                          |
+| `modality`               | enum          | `"vision"`               | `"vision"` sends image as data URL; `"text"` sends only the prompt (used for caption-based ablations).                                          |
+| `dimensions`             | list          | `["valence", "arousal"]` | Which dimensions to enqueue. Use `["valence"]` to halve the trial count.                                                                        |
+| `image_set`              | str           | `"pilot_30"`             | Named subset (`full_900`, `pilot_30`, `pilot_10`, `smoke_3`) or a path to a newline-delimited image-id file. See [Image set](/image-set).       |
+| `samples_per_image`      | int           | `5`                      | Ratings per (image, dimension) cell. **Excluded from `canonical_hash`** so progressive sampling is allowed.                                     |
+| `max_concurrency`        | int           | `4`                      | Async worker count. **Excluded from `canonical_hash`.**                                                                                         |
+| `request_timeout_s`      | int           | `60`                     | Per-call LiteLLM timeout. **Excluded from `canonical_hash`.**                                                                                   |
+| `max_retries`            | int           | `3`                      | Hard cap on `attempts`; trials with `status='failed' AND attempts >= 3` are terminal. **Excluded from `canonical_hash`.**                       |
+| `temperature`            | float \| null | `null`                   | If set, passed to provider; if `null`, provider default is used (which for many open-weights models is `0.0`).                                  |
+| `max_tokens`             | int           | `256`                    | Generation cap. JSON-with-reasoning fits in &lt;100 tokens; 256 is comfortable headroom.                                                        |
+| `capture_reasoning`      | bool          | `true`                   | If `true`, rewrite prompt to ask for `{rating, reasoning}` JSON and skip strict `response_format`. See [Reasoning capture](/reasoning-capture). |
+| `cache_buster`           | bool          | `true`                   | Append a per-`(image, dim, sample_idx)` salt at the end of the user prompt to force decoding variance. See [Cache buster](/cache-buster).       |
+| `system_prompt_override` | str \| null   | `null`                   | Full replacement for paper-verbatim system prompt. Use sparingly — invalidates direct comparison to the human norms.                            |
+| `format_hint_suffix`     | str \| null   | `null`                   | Appended to the user prompt; useful to coerce JSON-only output on weaker models.                                                                |
+| `api_base`               | str \| null   | `null`                   | For Ollama or self-hosted vLLM/SGLang, e.g. `http://localhost:11434`.                                                                           |
+| `extra_params`           | dict          | `{}`                     | Passed verbatim to `litellm.acompletion`. Use for provider-specific knobs.                                                                      |
+
+## Canonical hash
+
+`RunConfig.canonical_hash()` is `sha256(model_dump(exclude={...}))[:16]`. It **excludes**:
+
+- `name` — the identifier itself
+- `max_concurrency`, `request_timeout_s`, `max_retries` — runtime knobs that shouldn't change the experiment
+- `samples_per_image` — so progressive sampling is allowed without forking the run
+
+Everything else **does** invalidate the run. If you change `model`, `dimensions`, `image_set`, `temperature`, `cache_buster`, `capture_reasoning`, the system prompt, or anything else the model sees, you must rename. `upsert_run` raises:
+
+```text
+RuntimeError: Run 'pilot10-gemma4-31b' exists with different config hash
+(stored=ab12cd34ef567890, new=ff00112233445566). Use a new --name or --new-run.
+```
+
+This is on purpose — it's the difference between "resume the same experiment" and "silently start a different one".
+
+## Provider notes
+
+<AccordionGroup>
+  <Accordion title="OpenRouter">
+    Set `OPENROUTER_API_KEY`. Native cost reporting is enabled automatically
+    (`extra_body.usage.include=true`) so `cost_usd` is populated even when
+    LiteLLM doesn't have a price entry.
+  </Accordion>
+  <Accordion title="Ollama">
+    Set `api_base: http://localhost:11434`. Costs will be `NULL`. `temperature`
+    defaults vary by model — set it explicitly if you care.
+  </Accordion>
+  <Accordion title="Anthropic / Google / OpenAI">
+    Standard env-var auth (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
+    `OPENAI_API_KEY`). Cost is reported by LiteLLM directly.
+  </Accordion>
+</AccordionGroup>

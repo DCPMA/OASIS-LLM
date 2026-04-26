@@ -1,0 +1,75 @@
+---
+title: "Image set"
+description: "How OASIS images are loaded, how named subsets are stratified, and how to define your own."
+---
+
+## Source images
+
+OASIS ships 900 open-access color images, standardized to 500 × 400 pixels, in `OASIS/images/*.jpg`. Image IDs are filename stems (e.g. `Beach 1`, `Alarm clock 1`).
+
+Images are loaded into the LLM call as **base64 data URLs** so that runs are reproducible without network fetches and so that the same prompt works across providers:
+
+```python
+def image_data_url(image_id: str) -> str:
+    return f"data:image/jpeg;base64,{encode_image_base64(image_id)}"
+```
+
+This is more bytes on the wire than a hosted URL, but it removes a class of "the URL changed under us" failure modes.
+
+## Named image sets
+
+The `image_set` field in a run config picks a named subset:
+
+| `image_set` | Size   | How it's built                                      |
+| ----------- | ------ | --------------------------------------------------- |
+| `full_900`  | 900    | Every image in `OASIS/images/`, sorted by ID.       |
+| `pilot_30`  | 30     | Stratified sample across OASIS categories, seed=42. |
+| `pilot_10`  | 10     | Stratified sample across OASIS categories, seed=42. |
+| `smoke_3`   | 3      | Stratified sample across OASIS categories, seed=42. |
+| _path_      | varies | Path to a newline-delimited file of image IDs.      |
+
+### Stratified sampling
+
+For pilot subsets we proportionally allocate images across OASIS **category** labels (pulled from the human-norms long CSV at `data/derived/OASIS_data_long.csv`), with at least one image per category. Allocations are deterministic for a given `(n, seed)`:
+
+<Steps>
+  <Step title="Load category map">
+    `image_categories()` returns `{image_id: category}` from the long CSV.
+  </Step>
+  <Step title="Allocate proportionally">
+    Each category gets `max(1, round(n * size_cat / total))` images. Drift from the target `n` is corrected by adding to the smallest bucket or removing from the largest.
+  </Step>
+  <Step title="Shuffle within category">
+    Pools are sorted deterministically (DuckDB `DISTINCT` does not guarantee order), then shuffled with a seeded RNG.
+  </Step>
+  <Step title="Filter to disk">
+    Only image IDs that actually have a `.jpg` on disk are kept.
+  </Step>
+</Steps>
+
+<Note>
+  If `data/derived/OASIS_data_long.csv` is missing, `_stratified_sample` falls
+  back to a uniform random sample across all 900 images with the same seed.
+</Note>
+
+## Custom image sets
+
+Point `image_set` at a path to a newline-delimited file of image IDs:
+
+```yaml
+image_set: configs/image_sets/negative_high_arousal.txt
+```
+
+```text negative_high_arousal.txt
+Snake 2
+Spider 5
+Car crash 3
+```
+
+This is how you do targeted reliability or stress-test runs without enqueueing the full 900.
+
+## Why this matters
+
+The image set is part of the run's `canonical_hash` — switching `image_set` from `pilot_10` to `full_900` makes it a different run and requires a new `name` in the YAML. This is intentional: it prevents a partially-completed pilot from being silently extended into a different experiment.
+
+`samples_per_image` is **not** part of the hash, so you can bump from `5` to `20` on the same run and only the new sample indices are enqueued.

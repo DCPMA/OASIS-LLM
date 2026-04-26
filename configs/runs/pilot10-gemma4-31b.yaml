@@ -1,0 +1,11 @@
+name: pilot10-gemma4-31b
+provider: openrouter
+model: google/gemma-4-31b-it
+modality: vision
+dimensions: [valence, arousal]
+image_set: pilot_10
+samples_per_image: 5
+max_concurrency: 4
+request_timeout_s: 60
+max_tokens: 256
+capture_reasoning: true

@@ -1,0 +1,128 @@
+---
+title: "Experiment design"
+description: "What we replicate from Kurdi, Lozano, & Banaji (2017), and the paper-verbatim instructions used."
+---
+
+## The original OASIS procedure
+
+Kurdi, Lozano, &amp; Banaji (2017) normed 900 open-access color images on two affective dimensions:
+
+- **Valence** — the level of positivity vs. negativity intrinsic to the image.
+- **Arousal** — the level of intensity vs. calmness intrinsic to the image, treated as orthogonal to valence.
+
+Both dimensions were rated on a **7-point Likert scale** with verbal anchors at every step.
+
+### Sample structure (paper)
+
+- 822 usable MTurk participants, restricted to ≥90% approval and ≥50 prior HITs.
+- Images split into **4 lists of 225 images** each. Each participant saw one list, in individually randomized order.
+- **Between-subject** assignment: each participant rated **only one** dimension (valence _or_ arousal), never both.
+- ~100 ratings per (image, dimension) cell after balancing across lists.
+
+## The OASIS-LLM replication
+
+We replay the rating procedure against an LLM, holding the _instructions_ constant and varying only the rater.
+
+### What we keep verbatim
+
+- The 7-point scale, with the paper's exact anchor labels for each dimension.
+- The image-centered instruction wording (the paper's main study used this variant only — internal-state-focused instructions were used only for a methodological appendix).
+- The instruction to rate arousal **independently of valence**.
+
+The system prompts are loaded directly from `src/oasis_llm/prompts.py`:
+
+<CodeGroup>
+```python Valence (system)
+In this study you will be presented with a series of images. We are interested in
+the affective response that these images evoke. The dimension that we are asking
+you to rate is VALENCE.
+
+Valence refers to the level of positivity or negativity intrinsic to an image.
+At one extreme of the valence scale, an image is very negative; at the other
+extreme, an image is very positive.
+
+You will rate each image on a 7-point scale with the following labels:
+1 = Very negative
+2 = Moderately negative
+3 = Somewhat negative
+4 = Neutral
+5 = Somewhat positive
+6 = Moderately positive
+7 = Very positive
+
+Please respond with a single integer from 1 to 7.
+
+````
+
+```python Arousal (system)
+In this study you will be presented with a series of images. We are interested in
+the affective response that these images evoke. The dimension that we are asking
+you to rate is AROUSAL.
+
+Arousal refers to the level of intensity or excitement intrinsic to an image.
+At one extreme of the arousal scale, an image is very low in arousal (calm,
+relaxing, sleepy); at the other extreme, an image is very high in arousal
+(stimulating, exciting, frenzied).
+
+Note that arousal is orthogonal to valence: a calm scene can be either positive
+(a peaceful beach) or negative (a foggy graveyard), and an exciting scene can be
+either positive (a celebration) or negative (a violent confrontation). Rate
+arousal independently of valence.
+
+You will rate each image on a 7-point scale with the following labels:
+1 = Very low
+2 = Moderately low
+3 = Somewhat low
+4 = Neither low nor high
+5 = Somewhat high
+6 = Moderately high
+7 = Very high
+
+Please respond with a single integer from 1 to 7.
+````
+
+```python User turn
+# valence
+Please rate the VALENCE of this image on the 1-7 scale.
+
+# arousal
+Please rate the AROUSAL of this image on the 1-7 scale.
+```
+
+</CodeGroup>
+
+### What we change
+
+<Warning>
+  Two design choices in the LLM replication differ deliberately from the human
+  protocol. They make the replication cheaper and simpler, but they limit what
+  we can claim by direct comparison. See [Discrepancies](/discrepancies) for the
+  full list and rationale.
+</Warning>
+
+**Within-subject instead of between-subject.** A single model run rates _both_ valence and arousal for every image. The paper kept these strictly between-subject so that one rating could not anchor the other. We collapse them to one run because the per-trial cost is dominated by the image upload, and because we want both columns out of every model with one config.
+
+**Smaller N per cell.** The default is `samples_per_image: 5`, giving 5 ratings per (image, dimension) cell instead of the paper's ~100. This is a deliberate cost/reliability trade. By the Spearman-Brown prophecy, if the paper-level inter-rater reliability is ρ ≈ 0.984 for valence at k = 102 raters, the expected reliability at k = 5 raters is
+
+$$
+\rho_{k'} = \frac{(k'/k) \cdot \rho}{1 + ((k'/k) - 1) \cdot \rho} \approx 0.762
+$$
+
+That is the ceiling of what 5 model samples can achieve as a cell-mean estimate, _assuming the model ratings have the same true between-image variance and noise structure as humans_. They almost certainly don't, so treat this number as a budgeting tool, not a guarantee.
+
+`samples_per_image` is excluded from the run's `canonical_hash`, so you can resume a run later with a higher `samples_per_image` and the harness will only enqueue the _new_ sample indices.
+
+### Trial structure
+
+Each trial is uniquely identified by:
+
+```text
+(run_id, image_id, dimension, sample_idx)
+```
+
+- `run_id` — the `name` field from the YAML config.
+- `image_id` — the OASIS filename stem (e.g. `Alarm clock 1`).
+- `dimension` — `"valence"` or `"arousal"`.
+- `sample_idx` — `0..samples_per_image-1`. With `cache_buster: true` (the default), each `sample_idx` produces a different per-trial salt that is appended to the user prompt to force decoding-path divergence at temperature=0. See [Cache buster](/cache-buster).
+
+The full trial table schema is in [Workflow](/workflow#trial-record).
