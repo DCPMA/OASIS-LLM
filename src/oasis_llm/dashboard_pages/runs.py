@@ -234,17 +234,34 @@ def _render_detail(run_id: str):
             st.caption("⏱ Run is live — click 🔄 *Rerun* to refresh.")
 
     # ── KPIs ────────────────────────────────────────────────────────────────
+    from oasis_llm import estimates as _est
+    proj = _est.project_run(con, run_id)
     cols = st.columns(4)
     cols[0].markdown(kpi("Status", status), unsafe_allow_html=True)
     cols[1].markdown(
         kpi("Trials", f"{done}/{total}", f"{pending} pending · {failed} failed · {running} running"),
         unsafe_allow_html=True,
     )
-    cols[2].markdown(kpi("Cost", f"${cost:.4f}"), unsafe_allow_html=True)
-    cols[3].markdown(
-        kpi("Created", str(created)[:19] if created else "—"),
-        unsafe_allow_html=True,
-    )
+    cost_label = f"${cost:.4f}"
+    cost_sub = None
+    if proj is not None and proj.projected_total_usd is not None and proj.remaining > 0:
+        cost_sub = (
+            f"projected total ≈ {_est.format_cost(proj.projected_total_usd)}"
+        )
+    cols[2].markdown(kpi("Cost", cost_label, cost_sub), unsafe_allow_html=True)
+    if proj is not None and proj.eta_seconds is not None:
+        eta_label = _est.format_duration(proj.eta_seconds)
+        eta_sub = (
+            f"~{proj.latency_recent_mean_s:.1f}s/trial · "
+            f"{proj.remaining} left"
+            if proj.latency_recent_mean_s is not None else None
+        )
+        cols[3].markdown(kpi("ETA", eta_label, eta_sub), unsafe_allow_html=True)
+    else:
+        cols[3].markdown(
+            kpi("Created", str(created)[:19] if created else "—"),
+            unsafe_allow_html=True,
+        )
 
     # ── Progress bar ────────────────────────────────────────────────────────
     pct = (done / total) if total else 0.0

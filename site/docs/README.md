@@ -46,7 +46,7 @@ module, grep this directory for the old path.
 | ----------------------- | --------------------------------------------------------- |
 | `docs.json`             | Mintlify v2 config (theme, navigation, colors).           |
 | `index.mdx`             | Landing page with navigation cards.                       |
-| `quickstart.mdx`        | `oasis-llm run` / `dashboard` / `status` / `export`.      |
+| `quickstart.mdx`        | Minimal install + `oasis-llm dashboard`.                  |
 | `experiment-design.mdx` | 7-point Likert, paper-verbatim prompts, sample-size math. |
 | `image-set.mdx`         | Named subsets, stratified sampling, custom image lists.   |
 | `workflow.mdx`          | Mermaid sequence + state diagrams, trial schema.          |
