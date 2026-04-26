@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RunConfig(BaseModel):
     name: str
     provider: Literal["openrouter", "ollama", "anthropic", "google", "openai"]
-    model: str  # litellm-style model id, e.g. "openrouter/google/gemma-4-31b-it"
+    model: str  # bare model id; the `openrouter/` prefix is added at dispatch
     modality: Literal["vision", "text"] = "vision"
     dimensions: list[Literal["valence", "arousal"]] = Field(default_factory=lambda: ["valence", "arousal"])
     image_set: str = "pilot_30"  # named subset or "full_900"
@@ -38,6 +38,21 @@ class RunConfig(BaseModel):
     format_hint_suffix: str | None = None  # appended to user prompt; useful to enforce JSON-only output on weaker models
     api_base: str | None = None  # for ollama, e.g. "http://localhost:11434"
     extra_params: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalize_model_id(self):
+        """Drop a redundant ``openrouter/`` prefix on OpenRouter configs.
+
+        Stored ids are always bare (``google/gemma-3-27b-it:free``). The
+        dispatch layer (``providers.litellm_model_id``) adds the
+        ``openrouter/`` prefix that LiteLLM requires. Without this
+        normalizer we'd get two different ``canonical_hash``es for the
+        same logical model, depending on whether the user pasted the
+        prefix or not.
+        """
+        if self.provider == "openrouter" and self.model.startswith("openrouter/"):
+            object.__setattr__(self, "model", self.model[len("openrouter/"):])
+        return self
 
     def canonical_hash(self) -> str:
         # Exclude fields that should NOT invalidate a run:

@@ -15,7 +15,7 @@ from oasis_llm.dashboard_pages._ui import (
 )
 
 
-PROVIDERS = ["ollama", "openrouter", "anthropic", "google", "openai"]
+PROVIDERS = ["openrouter", "ollama", "anthropic", "google", "openai"]
 
 
 def _slug_from_model(model: str) -> str:
@@ -34,10 +34,12 @@ def _slug_from_model(model: str) -> str:
 # Curated suggestions per provider. Ollama is filled live by querying the local daemon.
 KNOWN_MODELS: dict[str, list[str]] = {
     "openrouter": [
-        "openrouter/google/gemma-3-27b-it",
-        "openrouter/google/gemini-2.0-flash-exp:free",
-        "openrouter/anthropic/claude-3.5-sonnet",
-        "openrouter/openai/gpt-4o-mini",
+        # Stored without the `openrouter/` prefix — cfg.provider already
+        # disambiguates and litellm_model_id() adds the prefix at dispatch.
+        "google/gemma-3-27b-it",
+        "google/gemini-2.0-flash-exp:free",
+        "anthropic/claude-3.5-sonnet",
+        "openai/gpt-4o-mini",
     ],
     "anthropic": ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
     "google":    ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"],
@@ -85,7 +87,8 @@ def _openrouter_models(vision_only: bool = False, free_only: bool = False) -> tu
         priority = {"anthropic": 0, "google": 1, "openai": 2}.get(head, 9)
         return (priority, mid.startswith("~"), mid)
     models.sort(key=_sort_key)
-    return [f"openrouter/{m['id']}" for m in models if m.get("id")], None
+    # Bare ids, no `openrouter/` prefix — kept symmetrical with cfg.model.
+    return [m["id"] for m in models if m.get("id")], None
 
 
 @st.cache_data(ttl=30)
@@ -360,11 +363,23 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
     """Convert a stored ``config_json`` row back into the editor's session shape."""
     extra = dict(cj.get("extra_params") or {})
     disable_thinking = bool(extra.get("think") is False) if "think" in extra else True
+    provider = cj.get("provider", "openrouter")
+    model = str(cj.get("model", ""))
+    # Strip a redundant `openrouter/` prefix — `cfg.provider == "openrouter"`
+    # already disambiguates and `litellm_model_id()` re-adds the prefix at
+    # dispatch. Keeps the form/UI consistent with the catalogue, which lists
+    # bare ids.
+    if provider == "openrouter" and model.startswith("openrouter/"):
+        model = model[len("openrouter/"):]
+    # Auto-derive flag: if the saved name still matches what we'd auto-derive
+    # from the model id, default the toggle to ON so editing the model also
+    # updates the slug. Otherwise honour the user's custom name.
+    auto = (cfg_name == _slug_from_model(model))
     return {
         "config_name": cfg_name,
-        "config_name_auto": False,  # preserve existing slug verbatim
-        "provider": cj.get("provider", "ollama"),
-        "model": cj.get("model", ""),
+        "config_name_auto": auto,
+        "provider": provider,
+        "model": model,
         "temperature": float(cj.get("temperature") or 0.0),
         "samples_per_image": int(cj.get("samples_per_image", 5)),
         "capture_reasoning": bool(cj.get("capture_reasoning", True)),
