@@ -1,0 +1,74 @@
+---
+title: "Deployment"
+description: "Public read-only deployment of the OASIS-LLM dashboard for sharing the LLM vs Human Explorer."
+icon: "rocket"
+---
+
+The Streamlit dashboard ships as a single ASGI/Tornado app and can be
+deployed read-only so collaborators can interact with the
+[LLM vs Human Explorer](/llm-vs-human-explorer) without local setup.
+
+## Recommended setups
+
+<CardGroup cols={3}>
+  <Card title="Streamlit Community Cloud" icon="cloud">
+    Point at the GitHub repo and choose `streamlit_app.py` as the entry.
+    Free; auth via GitHub. Dataset must live in the repo (or be downloaded
+    at startup). See [Streamlit Cloud setup](#streamlit-community-cloud) below.
+  </Card>
+  <Card title="Fly.io / Railway / Render" icon="server">
+    A Dockerfile + persistent volume holding `data/llm_runs.duckdb`. Best
+    for keeping the live database under your control.
+  </Card>
+  <Card title="Cloud Run + GCS" icon="google">
+    Container reads a read-only DuckDB file synced from GCS at startup.
+    Auto-scales to zero between visits.
+  </Card>
+</CardGroup>
+
+## Streamlit Community Cloud
+
+The repo ships a top-level `streamlit_app.py` shim that imports and runs
+the same dashboard module as `oasis-llm dashboard`.
+
+1. Push the repo to GitHub (Streamlit Cloud needs a public or connected repo).
+2. Go to <https://share.streamlit.io>, click **New app**, and pick
+   the repo + branch. Set **Main file path** to `streamlit_app.py`.
+3. Under **Advanced settings → Python version**, choose 3.12 or 3.13.
+4. Add a secret `OASIS_LLM_READONLY = "1"` (the shim defaults to this anyway).
+5. Make sure `data/llm_runs.duckdb` is committed (or extend the shim to
+   download it at startup from S3/GCS).
+6. Deploy. The Explorer is then reachable at
+   `https://<your-app>.streamlit.app/?page=LLM+vs+Human`.
+
+## Read-only mode
+
+Set `OASIS_LLM_READONLY=1` to disable the writer-only pages
+(Datasets approve/reject, Run admin actions). The Explorer always works
+in read-only mode because every query goes through `connect_ro()`.
+
+## Minimal Dockerfile
+
+```Dockerfile
+FROM python:3.13-slim
+WORKDIR /app
+RUN pip install --no-cache-dir uv
+COPY pyproject.toml uv.lock ./
+RUN uv pip install --system .
+COPY . .
+ENV OASIS_LLM_READONLY=1
+EXPOSE 8501
+CMD ["streamlit", "run", "src/oasis_llm/dashboard.py", "--server.address=0.0.0.0", "--server.port=8501"]
+```
+
+## Linking from the docs
+
+The navbar link in `site/docs/docs.json` is wired to
+`https://explorer.oasis-llm.org` by default — change it to your hosted URL.
+
+## Auth options
+
+- **No auth** for public researcher demos.
+- **Cloudflare Access** in front of the container for institutional users.
+- **HTTP basic** via a small reverse proxy (Caddy/Traefik) when you need a
+  single shared password.

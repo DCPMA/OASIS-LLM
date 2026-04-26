@@ -29,6 +29,7 @@ PAGES = {
     "Experiments":    "🧪",
     "Runs":           "📊",
     "Analysis":       "🔬",
+    "LLM vs Human":   "🆚",
     "Import / Export": "📦",
     "Settings":       "⚙️",
 }
@@ -71,6 +72,9 @@ elif page == "Runs":
 elif page == "Analysis":
     from oasis_llm.dashboard_pages import analyses
     analyses.render()
+elif page == "LLM vs Human":
+    from oasis_llm.dashboard_pages import llm_vs_human_explorer
+    llm_vs_human_explorer.render()
 elif page == "Import / Export":
     from oasis_llm.dashboard_pages import export as export_page
     export_page.render()

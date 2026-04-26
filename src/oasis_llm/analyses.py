@@ -284,6 +284,7 @@ def leaderboard(
             rho = float("nan")
         mae = float(np.abs(pred - human).mean())
         rmse = float(np.sqrt(((pred - human) ** 2).mean()))
+        ccc_val = _ccc(pred, human)
         meta = run_meta.get(run_id, {})
         rows.append({
             "run_id": run_id,
@@ -294,6 +295,7 @@ def leaderboard(
             "n_images": int(len(sub)),
             "pearson_r": r,
             "spearman_rho": rho,
+            "ccc": ccc_val,
             "mae": mae,
             "rmse": rmse,
             "mean_pred": float(pred.mean()),
@@ -393,3 +395,579 @@ def icc_across_runs(con, analysis_id: str) -> pd.DataFrame:
             "icc2_1": float(icc2_1), "icc3_1": float(icc3_1),
         })
     return pd.DataFrame(rows)
+
+
+# ─── extended human-norms loader (with Category) ────────────────────────────
+def _load_norms_with_category(norms_csv: str = "OASIS/OASIS.csv") -> pd.DataFrame:
+    """Load OASIS norms including ``Category`` column.
+
+    Returns columns: ``image_id, category, human_valence, human_arousal``.
+    """
+    return duckdb.connect(":memory:").execute(
+        f"""
+        SELECT "Theme"        AS image_id,
+               "Category"     AS category,
+               "Valence_mean" AS human_valence,
+               "Arousal_mean" AS human_arousal
+        FROM read_csv_auto('{norms_csv}', header=true)
+        """
+    ).fetchdf()
+
+
+def _vs_human_with_category(con, analysis_id: str, norms_csv: str = "OASIS/OASIS.csv") -> pd.DataFrame:
+    """Per-image (run × dimension) means joined with human norms + Category."""
+    df = per_image_aggregate(con, analysis_id)
+    if df.empty:
+        return pd.DataFrame()
+    norms = _load_norms_with_category(norms_csv)
+    merged = df.merge(norms, on="image_id", how="left")
+    merged["human_value"] = merged.apply(
+        lambda r: r["human_valence"] if r["dimension"] == "valence" else r["human_arousal"],
+        axis=1,
+    )
+    merged["delta"] = merged["mean_rating"] - merged["human_value"]
+    return merged
+
+
+# ─── shared statistical helpers ─────────────────────────────────────────────
+def _cohens_d_paired(diff: "np.ndarray") -> float:
+    import numpy as np
+    sd = float(diff.std(ddof=1))
+    return float(diff.mean() / sd) if sd > 0 else float("nan")
+
+
+def _bootstrap_ci(
+    arr1: "np.ndarray",
+    arr2: "np.ndarray | None",
+    stat_fn,
+    *,
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> tuple[float, float]:
+    """Percentile bootstrap CI for a paired/single-array statistic.
+
+    If ``arr2`` is None, ``stat_fn(sample)`` is called on a single resample.
+    Otherwise ``stat_fn(s1, s2)`` is called on paired indices.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    n = len(arr1)
+    stats = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
+        idx = rng.integers(0, n, n)
+        if arr2 is None:
+            stats[i] = stat_fn(arr1[idx])
+        else:
+            stats[i] = stat_fn(arr1[idx], arr2[idx])
+    lo, hi = np.nanpercentile(stats, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return float(lo), float(hi)
+
+
+def _ccc(pred: "np.ndarray", human: "np.ndarray") -> float:
+    """Lin's concordance correlation coefficient."""
+    import numpy as np
+    p = np.asarray(pred, dtype=float)
+    h = np.asarray(human, dtype=float)
+    mp, mh = p.mean(), h.mean()
+    vp, vh = p.var(ddof=0), h.var(ddof=0)
+    cov = np.mean((p - mp) * (h - mh))
+    denom = vp + vh + (mp - mh) ** 2
+    return float(2 * cov / denom) if denom > 0 else float("nan")
+
+
+def _try_scipy():
+    try:
+        from scipy import stats as sps  # type: ignore
+        return sps
+    except Exception:  # pragma: no cover
+        return None
+
+
+# ─── (1) Paired t-test per run × dimension ─────────────────────────────────
+def paired_ttest_per_run(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+    n_boot: int = 0,
+) -> pd.DataFrame:
+    """Per-image paired t-test of LLM mean vs human mean, for each run × dim.
+
+    Columns: ``run_id, model, dimension, n_images, llm_mean, human_mean,
+    mean_diff, sd_diff, t, df, p, cohens_d, pearson_r``. If ``n_boot > 0``,
+    bootstrap percentile CIs are added: ``mean_diff_ci_lo/hi`` and
+    ``cohens_d_ci_lo/hi``.
+    """
+    import numpy as np
+    sps = _try_scipy()
+    merged = _vs_human_with_category(con, analysis_id, norms_csv)
+    if merged.empty:
+        return pd.DataFrame()
+    merged = merged.dropna(subset=["mean_rating", "human_value"])
+
+    # run → model lookup
+    import json
+    run_meta = {}
+    for rid, cfg_json in con.execute("SELECT run_id, config_json FROM runs").fetchall():
+        try:
+            cfg = json.loads(cfg_json) if cfg_json else {}
+        except Exception:
+            cfg = {}
+        run_meta[rid] = cfg.get("model")
+
+    rows = []
+    for (rid, dim), sub in merged.groupby(["run_id", "dimension"]):
+        pred = sub["mean_rating"].astype(float).to_numpy()
+        human = sub["human_value"].astype(float).to_numpy()
+        n = len(pred)
+        if n < 2:
+            continue
+        diff = pred - human
+        sd_diff = float(diff.std(ddof=1))
+        if sps is not None:
+            t_stat, p_val = sps.ttest_rel(pred, human)
+            r_pearson = float(sps.pearsonr(pred, human)[0]) if pred.std() and human.std() else float("nan")
+        else:
+            se = sd_diff / np.sqrt(n) if sd_diff > 0 else float("nan")
+            t_stat = float(diff.mean() / se) if se and se > 0 else float("nan")
+            p_val = float("nan")
+            r_pearson = float(np.corrcoef(pred, human)[0, 1]) if pred.std() and human.std() else float("nan")
+        d = _cohens_d_paired(diff)
+        row = {
+            "run_id": rid,
+            "model": run_meta.get(rid),
+            "dimension": dim,
+            "n_images": int(n),
+            "llm_mean": float(pred.mean()),
+            "human_mean": float(human.mean()),
+            "mean_diff": float(diff.mean()),
+            "sd_diff": sd_diff,
+            "t": float(t_stat),
+            "df": int(n - 1),
+            "p": float(p_val),
+            "cohens_d": d,
+            "pearson_r": float(r_pearson),
+        }
+        if n_boot > 0:
+            mlo, mhi = _bootstrap_ci(pred, human, lambda a, b: float(np.mean(a - b)), n_boot=n_boot)
+            dlo, dhi = _bootstrap_ci(pred, human, lambda a, b: _cohens_d_paired(a - b), n_boot=n_boot)
+            row.update({
+                "mean_diff_ci_lo": mlo, "mean_diff_ci_hi": mhi,
+                "cohens_d_ci_lo": dlo, "cohens_d_ci_hi": dhi,
+            })
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(["dimension", "p"]).reset_index(drop=True)
+    return out
+
+
+# ─── (3) Pooled all-LLM aggregate t-test ───────────────────────────────────
+def pooled_ttest(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+    n_boot: int = 0,
+) -> pd.DataFrame:
+    """Average across runs to one LLM value per image, then paired t vs human.
+
+    Columns: ``dimension, n_images, k_runs, llm_mean, human_mean, mean_diff,
+    sd_diff, t, df, p, cohens_d, pearson_r`` (+ bootstrap CIs if requested).
+    """
+    import numpy as np
+    sps = _try_scipy()
+    merged = _vs_human_with_category(con, analysis_id, norms_csv)
+    if merged.empty:
+        return pd.DataFrame()
+    rows = []
+    for dim, sub in merged.groupby("dimension"):
+        pivot = sub.pivot_table(
+            index="image_id", columns="run_id", values="mean_rating", aggfunc="mean",
+        )
+        human = sub.drop_duplicates("image_id").set_index("image_id")["human_value"]
+        pooled = pivot.mean(axis=1)
+        joined = pd.concat([pooled.rename("llm"), human.rename("human")], axis=1).dropna()
+        if len(joined) < 2:
+            continue
+        pred = joined["llm"].to_numpy()
+        h = joined["human"].to_numpy()
+        diff = pred - h
+        sd_diff = float(diff.std(ddof=1))
+        if sps is not None:
+            t_stat, p_val = sps.ttest_rel(pred, h)
+            r_pearson = float(sps.pearsonr(pred, h)[0]) if pred.std() and h.std() else float("nan")
+        else:
+            se = sd_diff / np.sqrt(len(diff)) if sd_diff > 0 else float("nan")
+            t_stat = float(diff.mean() / se) if se and se > 0 else float("nan")
+            p_val = float("nan")
+            r_pearson = float(np.corrcoef(pred, h)[0, 1]) if pred.std() and h.std() else float("nan")
+        row = {
+            "dimension": dim,
+            "n_images": int(len(joined)),
+            "k_runs": int(pivot.shape[1]),
+            "llm_mean": float(pred.mean()),
+            "human_mean": float(h.mean()),
+            "mean_diff": float(diff.mean()),
+            "sd_diff": sd_diff,
+            "t": float(t_stat),
+            "df": int(len(joined) - 1),
+            "p": float(p_val),
+            "cohens_d": _cohens_d_paired(diff),
+            "pearson_r": float(r_pearson),
+        }
+        if n_boot > 0:
+            mlo, mhi = _bootstrap_ci(pred, h, lambda a, b: float(np.mean(a - b)), n_boot=n_boot)
+            dlo, dhi = _bootstrap_ci(pred, h, lambda a, b: _cohens_d_paired(a - b), n_boot=n_boot)
+            row.update({
+                "mean_diff_ci_lo": mlo, "mean_diff_ci_hi": mhi,
+                "cohens_d_ci_lo": dlo, "cohens_d_ci_hi": dhi,
+            })
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# ─── (4) Linear regression LLM on Human ────────────────────────────────────
+def regress_llm_on_human(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+    pooled: bool = False,
+) -> pd.DataFrame:
+    """OLS regression ``LLM = a + b · Human`` per run × dimension.
+
+    A perfectly calibrated model has ``b = 1, a = 0``. ``b > 1`` ⇒ scale
+    stretch; ``a > 0`` ⇒ positive shift. If ``pooled=True``, regresses the
+    cross-run pooled mean per image instead of per-run.
+    Returns columns: ``[run_id|"pooled"], dimension, n, slope, intercept,
+    r2, residual_sd``.
+    """
+    import numpy as np
+    merged = _vs_human_with_category(con, analysis_id, norms_csv)
+    if merged.empty:
+        return pd.DataFrame()
+    if pooled:
+        groups = []
+        for dim, sub in merged.groupby("dimension"):
+            pivot = sub.pivot_table(index="image_id", columns="run_id", values="mean_rating", aggfunc="mean")
+            human = sub.drop_duplicates("image_id").set_index("image_id")["human_value"]
+            pooled_s = pivot.mean(axis=1)
+            j = pd.concat([pooled_s.rename("y"), human.rename("x")], axis=1).dropna()
+            groups.append(("pooled", dim, j))
+    else:
+        groups = []
+        for (rid, dim), sub in merged.groupby(["run_id", "dimension"]):
+            j = sub[["mean_rating", "human_value"]].dropna().rename(
+                columns={"mean_rating": "y", "human_value": "x"}
+            )
+            groups.append((rid, dim, j))
+
+    rows = []
+    for label, dim, j in groups:
+        if len(j) < 3:
+            continue
+        x = j["x"].to_numpy(dtype=float); y = j["y"].to_numpy(dtype=float)
+        if x.std() == 0:
+            continue
+        slope, intercept = np.polyfit(x, y, 1)
+        y_hat = slope * x + intercept
+        ss_res = float(((y - y_hat) ** 2).sum())
+        ss_tot = float(((y - y.mean()) ** 2).sum())
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+        rows.append({
+            ("scope" if pooled else "run_id"): label,
+            "dimension": dim,
+            "n": int(len(j)),
+            "slope": float(slope),
+            "intercept": float(intercept),
+            "r2": float(r2),
+            "residual_sd": float(np.sqrt(ss_res / max(len(j) - 2, 1))),
+        })
+    return pd.DataFrame(rows)
+
+
+# ─── (5) CCC helper, exposed as public API ─────────────────────────────────
+def ccc_score(pred, human) -> float:
+    """Lin's concordance correlation coefficient. Public wrapper."""
+    import numpy as np
+    return _ccc(np.asarray(pred), np.asarray(human))
+
+
+# ─── (6) Per-category breakdown ────────────────────────────────────────────
+def category_breakdown(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+) -> pd.DataFrame:
+    """LLM-vs-human stats per (run × dimension × OASIS category).
+
+    Columns: ``run_id, model, dimension, category, n_images, llm_mean,
+    human_mean, mean_diff, pearson_r, t, p, cohens_d``.
+    """
+    import json
+    import numpy as np
+    sps = _try_scipy()
+    merged = _vs_human_with_category(con, analysis_id, norms_csv)
+    if merged.empty:
+        return pd.DataFrame()
+    merged = merged.dropna(subset=["mean_rating", "human_value", "category"])
+
+    run_meta = {}
+    for rid, cfg_json in con.execute("SELECT run_id, config_json FROM runs").fetchall():
+        try:
+            cfg = json.loads(cfg_json) if cfg_json else {}
+        except Exception:
+            cfg = {}
+        run_meta[rid] = cfg.get("model")
+
+    rows = []
+    for (rid, dim, cat), sub in merged.groupby(["run_id", "dimension", "category"]):
+        pred = sub["mean_rating"].astype(float).to_numpy()
+        human = sub["human_value"].astype(float).to_numpy()
+        n = len(pred)
+        if n < 2:
+            continue
+        diff = pred - human
+        sd_diff = float(diff.std(ddof=1))
+        if sps is not None:
+            t_stat, p_val = sps.ttest_rel(pred, human) if n > 1 else (float("nan"), float("nan"))
+            r_pearson = float(sps.pearsonr(pred, human)[0]) if pred.std() and human.std() else float("nan")
+        else:
+            se = sd_diff / np.sqrt(n) if sd_diff > 0 else float("nan")
+            t_stat = float(diff.mean() / se) if se and se > 0 else float("nan")
+            p_val = float("nan")
+            r_pearson = float(np.corrcoef(pred, human)[0, 1]) if pred.std() and human.std() else float("nan")
+        rows.append({
+            "run_id": rid,
+            "model": run_meta.get(rid),
+            "dimension": dim,
+            "category": cat,
+            "n_images": int(n),
+            "llm_mean": float(pred.mean()),
+            "human_mean": float(human.mean()),
+            "mean_diff": float(diff.mean()),
+            "pearson_r": float(r_pearson),
+            "t": float(t_stat),
+            "p": float(p_val),
+            "cohens_d": _cohens_d_paired(diff),
+        })
+    return pd.DataFrame(rows).sort_values(["dimension", "category", "model"]).reset_index(drop=True)
+
+
+# ─── (10) Distribution comparison ─────────────────────────────────────────
+def distribution_compare(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+) -> pd.DataFrame:
+    """Compare each run's raw rating distribution to human image-mean dist.
+
+    Returns: ``run_id, model, dimension, n_llm, n_human, ks_stat, ks_p,
+    wasserstein, llm_kurtosis, llm_pct_extreme``.
+    """
+    import json
+    import numpy as np
+    sps = _try_scipy()
+    if sps is None:
+        return pd.DataFrame()  # KS/Wasserstein require scipy
+
+    a = get(con, analysis_id)
+    if a is None or not a.run_ids:
+        return pd.DataFrame()
+
+    placeholders = ",".join("?" * len(a.run_ids))
+    raw = con.execute(
+        f"""
+        SELECT run_id, dimension, rating
+        FROM trials
+        WHERE run_id IN ({placeholders}) AND status='done' AND rating IS NOT NULL
+        """,
+        a.run_ids,
+    ).fetchdf()
+    if raw.empty:
+        return pd.DataFrame()
+
+    norms = _load_norms_with_category(norms_csv)
+    human_by_dim = {
+        "valence": norms["human_valence"].dropna().to_numpy(),
+        "arousal": norms["human_arousal"].dropna().to_numpy(),
+    }
+
+    run_meta = {}
+    for rid, cfg_json in con.execute("SELECT run_id, config_json FROM runs").fetchall():
+        try:
+            cfg = json.loads(cfg_json) if cfg_json else {}
+        except Exception:
+            cfg = {}
+        run_meta[rid] = cfg.get("model")
+
+    rows = []
+    for (rid, dim), sub in raw.groupby(["run_id", "dimension"]):
+        ll = sub["rating"].astype(float).to_numpy()
+        hh = human_by_dim.get(dim)
+        if hh is None or len(hh) == 0 or len(ll) == 0:
+            continue
+        ks_stat, ks_p = sps.ks_2samp(ll, hh)
+        try:
+            w = float(sps.wasserstein_distance(ll, hh))
+        except Exception:
+            w = float("nan")
+        try:
+            kurt = float(sps.kurtosis(ll, fisher=True, bias=False))
+        except Exception:
+            kurt = float("nan")
+        pct_extreme = float(np.mean((ll == ll.min()) | (ll == ll.max())))
+        rows.append({
+            "run_id": rid, "model": run_meta.get(rid), "dimension": dim,
+            "n_llm": int(len(ll)), "n_human": int(len(hh)),
+            "ks_stat": float(ks_stat), "ks_p": float(ks_p),
+            "wasserstein": w, "llm_kurtosis": kurt,
+            "llm_pct_extreme": pct_extreme,
+        })
+    return pd.DataFrame(rows).sort_values(["dimension", "wasserstein"]).reset_index(drop=True)
+
+
+# ─── (13) Outlier image table ──────────────────────────────────────────────
+def outlier_images(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+    top_k: int = 20,
+    scope: str = "pooled",  # "pooled" | "per_run"
+) -> pd.DataFrame:
+    """Top-K images where LLM disagrees most with human norms.
+
+    scope="pooled" uses the average across runs; scope="per_run" returns the
+    largest |Δ| rows globally across runs.
+    """
+    merged = _vs_human_with_category(con, analysis_id, norms_csv)
+    if merged.empty:
+        return pd.DataFrame()
+    if scope == "pooled":
+        agg = (
+            merged.groupby(["image_id", "category", "dimension"])
+            .agg(llm_mean=("mean_rating", "mean"),
+                 human_value=("human_value", "first"),
+                 k_runs=("run_id", "nunique"))
+            .reset_index()
+        )
+        agg["delta"] = agg["llm_mean"] - agg["human_value"]
+        agg["abs_delta"] = agg["delta"].abs()
+        out = (
+            agg.sort_values(["dimension", "abs_delta"], ascending=[True, False])
+            .groupby("dimension", group_keys=False)
+            .head(top_k)
+            .reset_index(drop=True)
+        )
+        return out
+    # per_run
+    merged["abs_delta"] = merged["delta"].abs()
+    out = (
+        merged.sort_values(["dimension", "abs_delta"], ascending=[True, False])
+        .groupby("dimension", group_keys=False)
+        .head(top_k)
+        .reset_index(drop=True)
+    )
+    return out[["run_id", "image_id", "category", "dimension", "mean_rating", "human_value", "delta", "abs_delta"]]
+
+
+# ─── (15) Inter-LLM agreement across N runs ────────────────────────────────
+def inter_llm_agreement(con, analysis_id: str) -> pd.DataFrame:
+    """Per-dimension agreement metrics across the runs in the analysis.
+
+    Columns: ``dimension, n_images, k_runs, mean_pairwise_r,
+    median_pairwise_r, mean_per_image_sd, icc2_1, icc3_1``.
+    """
+    import numpy as np
+    df = per_image_aggregate(con, analysis_id)
+    if df.empty:
+        return pd.DataFrame()
+    icc_df = icc_across_runs(con, analysis_id).set_index("dimension")
+    rows = []
+    for dim, sub in df.groupby("dimension"):
+        wide = sub.pivot(index="image_id", columns="run_id", values="mean_rating").dropna()
+        if wide.shape[0] < 2 or wide.shape[1] < 2:
+            continue
+        corr = wide.corr().values
+        iu = np.triu_indices_from(corr, k=1)
+        pairwise = corr[iu]
+        per_image_sd = wide.std(axis=1, ddof=1)
+        rows.append({
+            "dimension": dim,
+            "n_images": int(wide.shape[0]),
+            "k_runs": int(wide.shape[1]),
+            "mean_pairwise_r": float(np.nanmean(pairwise)),
+            "median_pairwise_r": float(np.nanmedian(pairwise)),
+            "mean_per_image_sd": float(per_image_sd.mean()),
+            "icc2_1": float(icc_df.loc[dim, "icc2_1"]) if dim in icc_df.index else float("nan"),
+            "icc3_1": float(icc_df.loc[dim, "icc3_1"]) if dim in icc_df.index else float("nan"),
+        })
+    return pd.DataFrame(rows)
+
+
+# ─── (16) Category × Model 2-way ANOVA on the |error| ──────────────────────
+def category_model_anova(
+    con,
+    analysis_id: str,
+    *,
+    norms_csv: str = "OASIS/OASIS.csv",
+) -> pd.DataFrame:
+    """Two-way ANOVA on |LLM-human delta| per image: Category × Model.
+
+    Tests whether bias magnitude depends on category, on model, or their
+    interaction. Implementation uses Type-III-style sums of squares for a
+    balanced/unbalanced two-factor design (effects-coded contrasts via least
+    squares; falls back to Type I ordering if statsmodels is unavailable).
+
+    Columns: ``dimension, factor, df, ss, ms, F, p, eta_sq``.
+    """
+    try:
+        import statsmodels.formula.api as smf
+        import statsmodels.api as sm
+    except Exception:
+        return pd.DataFrame()  # statsmodels optional
+    import json
+
+    merged = _vs_human_with_category(con, analysis_id, norms_csv)
+    if merged.empty:
+        return pd.DataFrame()
+    run_meta = {}
+    for rid, cfg_json in con.execute("SELECT run_id, config_json FROM runs").fetchall():
+        try:
+            cfg = json.loads(cfg_json) if cfg_json else {}
+        except Exception:
+            cfg = {}
+        run_meta[rid] = cfg.get("model") or rid
+    merged = merged.dropna(subset=["mean_rating", "human_value", "category"]).copy()
+    merged["model"] = merged["run_id"].map(run_meta)
+    merged["abs_err"] = (merged["mean_rating"] - merged["human_value"]).abs()
+
+    rows = []
+    for dim, sub in merged.groupby("dimension"):
+        if sub["category"].nunique() < 2 or sub["model"].nunique() < 2 or len(sub) < 8:
+            continue
+        # Type II ANOVA (statsmodels default with anova_lm typ=2)
+        try:
+            model = smf.ols("abs_err ~ C(category) + C(model) + C(category):C(model)", data=sub).fit()
+            aov = sm.stats.anova_lm(model, typ=2)
+        except Exception:
+            continue
+        ss_total = aov["sum_sq"].sum()
+        for factor, r in aov.iterrows():
+            rows.append({
+                "dimension": dim,
+                "factor": factor,
+                "df": float(r["df"]),
+                "ss": float(r["sum_sq"]),
+                "ms": float(r["sum_sq"]) / float(r["df"]) if r["df"] else float("nan"),
+                "F": float(r["F"]) if "F" in r and not pd.isna(r["F"]) else float("nan"),
+                "p": float(r["PR(>F)"]) if "PR(>F)" in r and not pd.isna(r["PR(>F)"]) else float("nan"),
+                "eta_sq": float(r["sum_sq"]) / ss_total if ss_total > 0 else float("nan"),
+            })
+    return pd.DataFrame(rows)
+

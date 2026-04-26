@@ -8,6 +8,14 @@
     "dark": "#5b21b6"
   },
   "favicon": "/favicon.svg",
+  "navbar": {
+    "links": [
+      {
+        "label": "Live Explorer",
+        "href": "https://explorer.oasis-llm.org"
+      }
+    ]
+  },
   "navigation": {
     "tabs": [
       {
@@ -27,12 +35,19 @@
             ]
           },
           {
+            "group": "Analysis",
+            "pages": [
+              "llm-vs-human-explorer"
+            ]
+          },
+          {
             "group": "Implementation",
             "pages": [
               "workflow",
               "configuration",
               "reasoning-capture",
-              "cache-buster"
+              "cache-buster",
+              "deployment"
             ]
           },
           {

@@ -21,6 +21,10 @@ dependencies = [
     "ollama>=0.4",
     "langfuse<3",
     "streamlit-autorefresh>=1.0.1",
+    "scipy>=1.13",
+    "statsmodels>=0.14",
+    "plotly>=5.24",
+    "seaborn>=0.13",
 ]
 
 [project.scripts]

@@ -1,0 +1,60 @@
+---
+title: "LLM vs Human Explorer"
+description: "Interactive comparison of LLM ratings against OASIS human norms — live, scopable, and category-aware."
+icon: "chart-line"
+---
+
+The **LLM vs Human Explorer** is the live analytical surface for comparing
+any subset of completed runs against OASIS human valence/arousal norms.
+
+It supports:
+
+- **Filter by model** (multi-select; "All" = pooled-LLM mean)
+- **Filter by category** (Animal, Scene, Person, Object — colour-coded)
+- **Filter by dimension** (valence / arousal)
+- **Filter by image** (substring search on `image_id`)
+- **Aggregation scope:** *Pooled all-LLMs · By model · By category · Model × Category*
+
+Eight tabs surface the underlying analyses:
+
+| Tab | What it shows |
+|---|---|
+| Descriptives | N, mean, SD, median, range — humans vs each model vs pooled-LLM trials |
+| t-tests | Paired t-tests of LLM image-mean vs human image-mean (with Cohen's *d*, Pearson *r*, optional bootstrap CIs) |
+| Regression | OLS `LLM = a + b·Human` per scope — diagnoses scale stretch/shift |
+| Scatter | Per-image LLM vs Human, coloured by model or by category |
+| Distribution | Histogram overlay + Kolmogorov–Smirnov + Wasserstein distance |
+| Outliers | Top-K images with the largest |LLM − Human| disagreement |
+| Inter-LLM agreement | Pairwise *r* + per-image SD across selected models |
+| Cat × Model ANOVA | Two-way ANOVA on |error|: does bias depend on category, model, or their interaction? |
+
+## How to access
+
+<Tabs>
+  <Tab title="Local (live)">
+    Run the dashboard locally:
+
+    ```bash
+    oasis-llm dashboard
+    ```
+
+    Then choose **🆚 LLM vs Human** in the sidebar.
+  </Tab>
+  <Tab title="Hosted">
+    A read-only deployment is linked from the navbar
+    (see [Deployment](/deployment) for setup).
+  </Tab>
+</Tabs>
+
+## Statistics behind the page
+
+All metrics are computed live from the DuckDB store:
+
+- Per-image paired *t* on N images per (model × dimension);
+  pooled t collapses across models first.
+- Cohen's *d* (paired) = mean(diff) / SD(diff).
+- Lin's CCC = `2·cov / (var_x + var_y + (mean_x − mean_y)²)`.
+- KS / Wasserstein on raw LLM trial ratings vs human image means.
+- ICC(2,1) and ICC(3,1) from Shrout & Fleiss (1979).
+
+See [`oasis_llm/analyses.py`](https://github.com) for the implementations.
