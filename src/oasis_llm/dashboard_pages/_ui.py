@@ -184,16 +184,28 @@ def get_con():
     DuckDB requires all in-process connections to share configuration, so we
     use one read-write connection for everything. Returns ``None`` if another
     OS process holds an exclusive lock on the file.
+
+    Retry-with-backoff: when the scheduler daemon is running, it briefly holds
+    the lock during each tick (~1s) and releases between ticks. We retry for
+    up to ~6s so the dashboard reliably hits a free window.
     """
+    import time
+
     @st.cache_resource(show_spinner=False)
     def _open():
         from oasis_llm.db import connect
         return connect()
-    try:
-        return _open()
-    except duckdb.IOException:
-        st.cache_resource.clear()
-        return None
+
+    delays = [0.0, 0.5, 1.0, 1.5, 2.0, 1.5]  # ~6.5s total
+    for d in delays:
+        if d:
+            time.sleep(d)
+        try:
+            return _open()
+        except duckdb.IOException:
+            st.cache_resource.clear()
+            continue
+    return None
 
 
 # Backwards-compat shims; both now return the shared cached connection.
