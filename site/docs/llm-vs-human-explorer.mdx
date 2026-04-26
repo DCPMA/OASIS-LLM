@@ -7,6 +7,27 @@ icon: "chart-line"
 The **LLM vs Human Explorer** is the live analytical surface for comparing
 any subset of completed runs against OASIS human valence/arousal norms.
 
+## Pipeline at a glance
+
+A run-agnostic, conceptual view of the comparison pipeline:
+
+```mermaid
+flowchart LR
+  A["OASIS images<br/>(900)"] --> B["Image set<br/>(N images, balanced<br/>across categories)"]
+  B --> C["Trial generator<br/>(K samples × 2 dimensions)"]
+  C --> D["LLM rater<br/>(provider/model/temperature)"]
+  D --> E["Trials table<br/>(rating, reasoning, latency)"]
+  H["OASIS human norms<br/>(valence_mean, arousal_mean)"] --> F
+  E --> F["Per-image aggregation<br/>(LLM trial → image mean)"]
+  F --> G["LLM vs Human comparison<br/>paired t · regression · CCC ·<br/>distribution · ANOVA · ICC"]
+  G --> I["Explorer tabs / Download CSV"]
+```
+
+The same pipeline drives every tab; only the **scope** (which runs, which
+models, which categories, which images) changes between invocations.
+
+## Capabilities
+
 It supports:
 
 - **Filter by model** (multi-select; "All" = pooled-LLM mean)

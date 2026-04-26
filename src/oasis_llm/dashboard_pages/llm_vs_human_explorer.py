@@ -206,6 +206,19 @@ def render() -> None:
     kpi_cols[3].metric("Dimensions", per_img_run["dimension"].nunique())
     kpi_cols[4].metric("Trials", int(trials.shape[0]))
 
+    # ── Active filter banner (sidebar controls apply to every tab) ──
+    _models_str = ", ".join(sel_models) if len(sel_models) <= 4 else f"{len(sel_models)} models"
+    _cats_str = ", ".join(sel_cats) if len(sel_cats) <= 4 else f"{len(sel_cats)} categories"
+    _dims_str = ", ".join(sel_dims)
+    _img_q = f" · image~'{img_query}'" if img_query else ""
+    st.info(
+        f"**Sidebar filters apply to every tab below.** "
+        f"Image set `{sel_set}` · models: {_models_str} · "
+        f"dimensions: {_dims_str} · categories: {_cats_str} · "
+        f"scope: **{scope}**{_img_q}",
+        icon="🎛️",
+    )
+
     tabs = st.tabs([
         "📊 Descriptives",
         "🧪 t-tests",
@@ -265,6 +278,14 @@ def render() -> None:
             st.info("Not enough data for a paired t-test under the current filter.")
         else:
             df_tt = pd.DataFrame(rows).round(4)
+            n_sig = int((df_tt["p"] < 0.05).sum()) if "p" in df_tt else 0
+            max_d = float(df_tt["cohens_d"].abs().max()) if "cohens_d" in df_tt else float("nan")
+            max_bias = float(df_tt["mean_diff"].abs().max()) if "mean_diff" in df_tt else float("nan")
+            kc = st.columns(4)
+            kc[0].metric("Tests", len(df_tt))
+            kc[1].metric("Significant (p<0.05)", n_sig)
+            kc[2].metric("Max |Cohen's d|", f"{max_d:.2f}")
+            kc[3].metric("Max |bias|", f"{max_bias:.2f}")
             st.dataframe(df_tt, use_container_width=True, hide_index=True)
             _csv_download(df_tt, filename="ttests.csv", key="dl_ttests")
 
@@ -276,6 +297,14 @@ def render() -> None:
             st.info("Not enough data for a regression fit.")
         else:
             df_reg = pd.DataFrame(rows).round(4)
+            best_r2 = float(df_reg["r2"].max()) if "r2" in df_reg else float("nan")
+            worst_r2 = float(df_reg["r2"].min()) if "r2" in df_reg else float("nan")
+            mean_slope = float(df_reg["slope"].mean()) if "slope" in df_reg else float("nan")
+            kc = st.columns(4)
+            kc[0].metric("Fits", len(df_reg))
+            kc[1].metric("Best R²", f"{best_r2:.3f}")
+            kc[2].metric("Worst R²", f"{worst_r2:.3f}")
+            kc[3].metric("Mean slope", f"{mean_slope:.2f}")
             st.dataframe(df_reg, use_container_width=True, hide_index=True)
             _csv_download(df_reg, filename="regression.csv", key="dl_regression")
 
@@ -319,6 +348,12 @@ def render() -> None:
                .reset_index(drop=True)
         )
         df_top = top.round(3)
+        max_d = float(df_top["abs_delta"].max()) if not df_top.empty else float("nan")
+        n_severe = int((df_top["abs_delta"] > 1.0).sum()) if not df_top.empty else 0
+        kc = st.columns(3)
+        kc[0].metric("Outliers shown", len(df_top))
+        kc[1].metric("Max |Δ|", f"{max_d:.2f}")
+        kc[2].metric("|Δ| > 1.0", n_severe)
         st.dataframe(df_top, use_container_width=True, hide_index=True)
         _csv_download(df_top, filename="outliers.csv", key="dl_outliers")
 
@@ -330,6 +365,12 @@ def render() -> None:
             st.info("Need ≥ 2 models with overlapping images.")
         else:
             df_inter = pd.DataFrame(rows).round(3)
+            best_r = float(df_inter["mean_pairwise_r"].max()) if "mean_pairwise_r" in df_inter else float("nan")
+            best_icc = float(df_inter["icc3_1"].max()) if "icc3_1" in df_inter else float("nan")
+            kc = st.columns(3)
+            kc[0].metric("Dimensions", len(df_inter))
+            kc[1].metric("Best mean pairwise r", f"{best_r:.3f}")
+            kc[2].metric("Best ICC(3,1)", f"{best_icc:.3f}")
             st.dataframe(df_inter, use_container_width=True, hide_index=True)
             _csv_download(df_inter, filename="inter_llm_agreement.csv", key="dl_inter")
 

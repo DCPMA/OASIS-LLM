@@ -23,28 +23,6 @@ Both dimensions were rated on a **7-point Likert scale** with verbal anchors at 
 
 We replay the rating procedure against an LLM, holding the _instructions_ constant and varying only the rater.
 
-### Pipeline at a glance
-
-The figure below is a run-agnostic, conceptual view of the pipeline that
-turns OASIS images and a candidate LLM into the statistics rendered by the
-[LLM vs Human Explorer](/llm-vs-human-explorer).
-
-```mermaid
-flowchart LR
-  A["OASIS images<br/>(900)"] --> B["Image set<br/>(N images, balanced<br/>across categories)"]
-  B --> C["Trial generator<br/>(K samples × 2 dimensions)"]
-  C --> D["LLM rater<br/>(provider/model/temperature)"]
-  D --> E["Trials table<br/>(rating, reasoning, latency)"]
-  H["OASIS human norms<br/>(valence_mean, arousal_mean)"] --> F
-  E --> F["Per-image aggregation<br/>(LLM trial → image mean)"]
-  F --> G["LLM vs Human comparison<br/>paired t · regression · CCC ·<br/>distribution · ANOVA · ICC"]
-  G --> I["Explorer / Mintlify"]
-```
-
-The same pipeline runs both for one-off cohort scripts and for the live
-Explorer; only the *scope* (which runs, which models, which categories,
-which images) changes between invocations.
-
 ### What we keep verbatim
 
 - The 7-point scale, with the paper's exact anchor labels for each dimension.
