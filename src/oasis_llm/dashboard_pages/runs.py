@@ -194,7 +194,7 @@ def _render_controls(con, run_id: str, status: str, pid, config_path, pending: i
                 "Start/Resume from the UI is unavailable. The run can still be controlled via "
                 f"`uv run oasis-llm run <yaml>` from the CLI."
             )
-        cs = st.columns(5)
+        cs = st.columns(6)
         # Start
         with cs[0]:
             can_start = (
@@ -219,15 +219,31 @@ def _render_controls(con, run_id: str, status: str, pid, config_path, pending: i
                         st.rerun()
                     except Exception as e:
                         st.error(str(e))
-        # Pause
+        # Queue
         with cs[1]:
+            can_queue = (
+                pid is None and status not in ("running", "queued")
+                and pending + failed > 0
+            )
+            if st.button("⏭️ Queue", disabled=not can_queue,
+                         width='stretch', key="rc_queue",
+                         help="Add this run to the scheduler queue."):
+                from oasis_llm import queue as _q
+                try:
+                    _q.enqueue(con, run_id)
+                    st.success("Queued. See the Queue page.")
+                except Exception as e:
+                    st.error(str(e))
+                st.rerun()
+        # Pause
+        with cs[2]:
             if st.button("⏸️ Pause", disabled=(status != "running"),
                          width='stretch', key="rc_pause"):
                 rc.pause(con, run_id)
                 st.info("Paused (workers will drain).")
                 st.rerun()
         # Resume
-        with cs[2]:
+        with cs[3]:
             can_resume = status == "paused" and config_path is not None
             if st.button("⏯️ Resume", disabled=not can_resume,
                          width='stretch', key="rc_resume"):
@@ -235,14 +251,19 @@ def _render_controls(con, run_id: str, status: str, pid, config_path, pending: i
                 st.success("Resumed.")
                 st.rerun()
         # Cancel
-        with cs[3]:
-            if st.button("⏹️ Cancel", disabled=(status not in ("running", "paused") and pid is None),
+        with cs[4]:
+            if st.button("⏹️ Cancel", disabled=(status not in ("running", "paused", "queued") and pid is None),
                          width='stretch', key="rc_cancel"):
-                rc.cancel(con, run_id)
-                st.warning("Cancelled.")
+                if status == "queued":
+                    from oasis_llm import queue as _q
+                    _q.cancel_queued(con, run_id)
+                    st.warning("Removed from queue.")
+                else:
+                    rc.cancel(con, run_id)
+                    st.warning("Cancelled.")
                 st.rerun()
         # Reset failures
-        with cs[4]:
+        with cs[5]:
             if st.button("🔁 Reset failed", disabled=(failed == 0),
                          width='stretch', key="rc_reset"):
                 n = rc.reset_failed(con, run_id)

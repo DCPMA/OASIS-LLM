@@ -237,6 +237,12 @@ async def _call_model(
     if cfg.provider == "openrouter":
         call_kwargs.setdefault("extra_body", {})
         call_kwargs["extra_body"].setdefault("usage", {"include": True})
+    # Ollama: thinking-capable models (qwen3/3.5, gemma4, deepseek-r1, ...) emit
+    # hidden reasoning tokens that consume max_tokens but don't appear in
+    # `content`, producing empty responses. Default `think: False` unless the
+    # user explicitly opted in via extra_params.
+    if cfg.provider == "ollama" and "think" not in cfg.extra_params:
+        call_kwargs["think"] = False
     if cfg.temperature is not None:
         call_kwargs["temperature"] = cfg.temperature
     # Strategy:

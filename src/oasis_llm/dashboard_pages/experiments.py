@@ -89,39 +89,106 @@ def _ollama_models() -> list[str]:
 
 
 @st.cache_data(ttl=300)
-def _ollama_vision_capable(name: str) -> bool:
-    """Heuristic check for Ollama vision-capable models.
+def _ollama_show(name: str) -> dict:
+    """Query Ollama /api/show for a model. Cached 5 min. Returns ``{}`` on error."""
+    import urllib.request, json as _json
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/show",
+            data=_json.dumps({"name": name}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as r:
+            return _json.loads(r.read())
+    except Exception:
+        return {}
 
-    Ollama's /api/show ``capabilities`` field is unreliable — it falsely
-    reports text-only models like ``qwen3.5:latest`` as having ``vision``.
-    Instead we match on well-known vision-LM name patterns. False negatives
-    are acceptable (user can switch to "all" or use Custom).
+
+def _ollama_capabilities(name: str) -> list[str]:
+    """Return Ollama's reported capabilities list for a model. May be empty.
+
+    NOTE: This field is **unreliable**. e.g. ``gemma4:e4b-mlx-bf16`` reports
+    no ``vision`` capability but actually accepts images. Use as informational
+    badge only, never as a hard gate.
     """
-    n = name.lower()
-    # Explicit exclusions: substring-similar but NOT vision.
-    # - gemma3n: small text+audio model from the gemma3-nano family, no image input.
-    if "gemma3n" in n:
-        return False
-    vision_markers = (
-        "vl",            # qwen2-vl, qwen2.5vl, qwen3-vl, internvl, paligemma2-vl
-        "llava",
-        "vision",        # llama3.2-vision, granite-vision
-        "moondream",
-        "minicpm-v",
-        "bakllava",
-        "gemma3",        # gemma 3 has built-in vision (but NOT gemma3n; see above)
-        "gemma4",        # ditto
-        "pixtral",
-        "cogvlm",
-    )
-    return any(m in n for m in vision_markers)
+    return _ollama_show(name).get("capabilities") or []
 
 
-def _models_for(provider: str, *, vision_only: bool = True) -> list[str]:
+def _probe_ollama_model(model: str, *, disable_thinking: bool = True) -> dict:
+    """Run one rating-style call against an Ollama model. Used by the Probe button.
+
+    Picks the first available approved-dataset image; falls back to a tiny
+    in-memory blank PNG if no DB image is available.
+    """
+    import asyncio, base64, time
+    from litellm import acompletion
+
+    # Try to find a real image; fall back to a 1x1 white PNG.
+    img_url: str | None = None
+    try:
+        from oasis_llm import images as _img
+        # Try a known small set first; user can re-probe with a richer set later.
+        for candidate in ("Spider 1", "Dancing 8", "Socks 1", "Wedding 12"):
+            try:
+                img_url = _img.image_data_url(candidate)
+                break
+            except Exception:
+                continue
+    except Exception:
+        img_url = None
+    if img_url is None:
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        img_url = "data:image/png;base64," + base64.b64encode(png).decode()
+
+    msgs = [
+        {"role": "system", "content": "You are a rating assistant. Output only an integer 1-7."},
+        {"role": "user", "content": [
+            {"type": "text", "text": "On a 1-7 scale, rate the arousal of this image. Output only the integer."},
+            {"type": "image_url", "image_url": {"url": img_url}},
+        ]},
+    ]
+    kwargs: dict = {
+        "model": f"ollama/{model}",
+        "messages": msgs,
+        "max_tokens": 64,
+        "timeout": 60,
+    }
+    if disable_thinking:
+        kwargs["think"] = False
+
+    t0 = time.monotonic()
+    try:
+        resp = asyncio.run(acompletion(**kwargs))
+        dt = time.monotonic() - t0
+        content = resp.choices[0].message.content or ""
+        finish = resp.choices[0].finish_reason
+        return {
+            "ok": bool(content.strip()),
+            "latency": dt,
+            "finish": finish,
+            "content": content[:200],
+            "content_len": len(content),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "latency": time.monotonic() - t0,
+            "finish": None,
+            "content": "",
+            "content_len": 0,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+def _models_for(provider: str, *, vision_only: bool = False) -> list[str]:
     if provider == "ollama":
+        # Always return ALL installed models. /api/show capabilities lies for
+        # several MLX-quantized vision models, so we let the user pick anything
+        # and surface capability info as a non-blocking badge.
         live = _ollama_models()
-        if vision_only:
-            live = [m for m in live if _ollama_vision_capable(m)]
         return live or ["qwen3-vl:8b", "gemma3:12b", "llava:latest"]
     if provider == "openrouter":
         live = _openrouter_models(vision_only=vision_only)
@@ -268,6 +335,8 @@ def _create_form():
                 "temperature": 0.0, "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": 4,
+                "max_retries": 2,
+                "disable_thinking": True,
             }
         ]
 
@@ -306,11 +375,11 @@ def _create_form():
                 index=PROVIDERS.index(cfg["provider"]) if cfg["provider"] in PROVIDERS else 0,
                 key=f"cfgprov_{i}",
             )
-            # Model picker: dropdown of known/installed + free-text override.
-            # Vision filter applies to providers that expose modality info.
+            # Model picker: dropdown of installed/known + free-text override.
+            # Vision filter applies only to OpenRouter (Ollama caps are unreliable).
             vision_only = (
                 cfg.get("_vision_only", True)
-                if cfg["provider"] in ("ollama", "openrouter") else False
+                if cfg["provider"] == "openrouter" else False
             )
             suggestions = _models_for(cfg["provider"], vision_only=vision_only)
             options = list(dict.fromkeys([cfg["model"], *suggestions, "✨ custom…"]))
@@ -319,8 +388,8 @@ def _create_form():
                 index=options.index(cfg["model"]) if cfg["model"] in options else 0,
                 key=f"cfgmodpick_{i}",
                 help=(
-                    "Vision-capable Ollama models (heuristic). "
-                    "Toggle below to see all installed models."
+                    "All locally installed Ollama models. Capability badges below "
+                    "come from /api/show but are unreliable for some MLX builds."
                     if cfg["provider"] == "ollama" else
                     "Live OpenRouter catalogue (cached 5min). "
                     "Toggle below to see all 350+ models."
@@ -339,23 +408,46 @@ def _create_form():
             # has overridden it.
             if cfg.get("config_name_auto", True):
                 cfg["config_name"] = _slug_from_model(cfg["model"])
-            if cfg["provider"] in ("ollama", "openrouter"):
+            if cfg["provider"] == "openrouter":
                 cfg["_vision_only"] = st.toggle(
                     "Vision-capable only", value=vision_only,
                     key=f"cfgvision_{i}",
                     help="Hide text-only models from the dropdown (recommended).",
                 )
-            if cfg["provider"] == "ollama":
-                if cfg["model"] in _ollama_models() and not _ollama_vision_capable(cfg["model"]):
-                    st.error(
-                        f"❌ `{cfg['model']}` is **not vision-capable** — image trials will "
-                        "hang and time out at the request_timeout_s. Pick a vision model."
-                    )
-                elif cfg["model"] not in _ollama_models() and _ollama_models():
-                    st.warning(
-                        f"⚠️ `{cfg['model']}` is not installed locally. "
-                        f"Available: {', '.join(_ollama_models()[:6])}…"
-                    )
+            if cfg["provider"] == "ollama" and cfg["model"] in _ollama_models():
+                caps = _ollama_capabilities(cfg["model"])
+                badges = " ".join(f"`{c}`" for c in caps) if caps else "_(none reported)_"
+                has_vision = "vision" in caps
+                has_thinking = "thinking" in caps
+                vision_note = (
+                    "✅ vision reported" if has_vision
+                    else "⚠️ no `vision` in capabilities — may still work for some MLX builds; use Probe to confirm"
+                )
+                think_note = (
+                    "· 🧠 thinking-capable — keep `Disable thinking` ON to avoid empty responses"
+                    if has_thinking else ""
+                )
+                st.caption(f"capabilities: {badges} · {vision_note} {think_note}")
+
+                pcol1, pcol2 = st.columns([1, 4])
+                if pcol1.button("🔬 Probe", key=f"cfgprobe_{i}",
+                                help="Run one rating call against an OASIS image and show the result."):
+                    with pcol2:
+                        with st.spinner(f"Probing {cfg['model']}…"):
+                            res = _probe_ollama_model(
+                                cfg["model"],
+                                disable_thinking=bool(cfg.get("disable_thinking", True)),
+                            )
+                        if res["ok"]:
+                            st.success(
+                                f"✅ {res['latency']:.1f}s · finish={res['finish']} · "
+                                f"content={res['content']!r}"
+                            )
+                        else:
+                            st.error(
+                                f"❌ {res['latency']:.1f}s · finish={res['finish']} · "
+                                f"content_len={res['content_len']} · {res.get('error', '')}"
+                            )
 
             # Run id slug — auto from model, with optional override
             with st.expander(
@@ -394,6 +486,18 @@ def _create_form():
             cfg["cache_buster"] = cd4.toggle(
                 "Cache buster", value=bool(cfg["cache_buster"]), key=f"cfgcb_{i}",
             )
+            if cfg["provider"] == "ollama":
+                cfg["disable_thinking"] = st.toggle(
+                    "Disable thinking (Ollama)",
+                    value=bool(cfg.get("disable_thinking", True)),
+                    key=f"cfgthink_{i}",
+                    help=(
+                        "Sends `think: False` to Ollama. Required for thinking-capable "
+                        "models (qwen3.5, gemma4, deepseek-r1) — otherwise hidden CoT "
+                        "tokens consume the entire `max_tokens` budget and the response "
+                        "comes back empty after a long latency."
+                    ),
+                )
             cfg["max_concurrency"] = st.slider(
                 "Max concurrency",
                 min_value=1, max_value=32,
@@ -402,6 +506,16 @@ def _create_form():
                 help=(
                     "Per-config concurrent in-flight requests. The global "
                     "`OASIS_MAX_CONCURRENCY` env var can cap this at runtime."
+                ),
+            )
+            cfg["max_retries"] = st.slider(
+                "Max retries per trial",
+                min_value=0, max_value=10,
+                value=int(cfg.get("max_retries", 2)),
+                key=f"cfgretries_{i}",
+                help=(
+                    "How many times the runner re-attempts a trial that errored "
+                    "or returned an unparseable response. Set 0 to disable retries."
                 ),
             )
 
@@ -422,6 +536,8 @@ def _create_form():
                 "temperature": 0.0, "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": int(last.get("max_concurrency", 4)),
+                "max_retries": int(last.get("max_retries", 2)),
+                "disable_thinking": bool(last.get("disable_thinking", True)),
             })
             st.rerun()
     with btns[1]:
@@ -436,9 +552,20 @@ def _create_form():
         if con is None:
             db_locked_warning(); return
         try:
+            cfgs_payload = []
+            for c in st.session_state["exp_configs"]:
+                c2 = {k: v for k, v in c.items() if not k.startswith("_")}
+                # Translate UI flag → litellm extra_params for Ollama.
+                if c2.get("provider") == "ollama" and c2.pop("disable_thinking", True):
+                    extra = dict(c2.get("extra_params") or {})
+                    extra.setdefault("think", False)
+                    c2["extra_params"] = extra
+                else:
+                    c2.pop("disable_thinking", None)
+                cfgs_payload.append(c2)
             exp_id = ex.create(
                 con, name, dataset_choice,
-                list(st.session_state["exp_configs"]),
+                cfgs_payload,
                 description=description or None,
             )
         except Exception as e:
@@ -535,7 +662,7 @@ def _render_detail(exp_id: str):
         return
 
     # Run / re-run button
-    btn_cols = st.columns([1, 1, 1, 3])
+    btn_cols = st.columns([1, 1, 1, 1, 2])
     thread_active = st.session_state.get(f"exp_thread_{exp_id}") is not None
     with btn_cols[0]:
         if st.button("▶️ Run all configs", type="primary",
@@ -543,6 +670,26 @@ def _render_detail(exp_id: str):
             _run_experiment(exp_id)
             st.rerun()
     with btn_cols[1]:
+        if st.button(
+            "⏭️ Queue experiment",
+            disabled=(total_pending + total_failed == 0) or thread_active,
+            help="Add every pending config to the run queue. The scheduler "
+            "(Queue page) will pick them up one at a time.",
+        ):
+            from oasis_llm import queue as _q
+            con = connect_rw()
+            if con is None: db_locked_warning(); return
+            try:
+                ids = _q.enqueue_experiment(con, exp_id)
+            except Exception as ee:
+                st.error(f"Failed: {ee}")
+            else:
+                if ids:
+                    st.success(f"Queued {len(ids)} config(s). Open the Queue page to monitor.")
+                else:
+                    st.info("Nothing to queue (all configs already done or running).")
+                st.rerun()
+    with btn_cols[2]:
         if thread_active and st.button("⏹️ Cancel"):
             ex.update_status(connect_rw(), exp_id, "cancelled")
             # The runner's _claim_one watches each run's status; flagging the
@@ -555,7 +702,7 @@ def _render_detail(exp_id: str):
                 )
             st.session_state.pop(f"exp_thread_{exp_id}", None)
             st.rerun()
-    with btn_cols[2]:
+    with btn_cols[3]:
         if not thread_active and st.button("🗑️ Delete"):
             st.session_state[f"confirm_delexp_{exp_id}"] = True
         if st.session_state.get(f"confirm_delexp_{exp_id}"):

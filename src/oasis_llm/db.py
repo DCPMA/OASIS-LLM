@@ -143,6 +143,23 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
     ).fetchall()}
     if "trace_id" not in cols:
         con.execute("ALTER TABLE trials ADD COLUMN trace_id TEXT")
+    # Run-queue columns on `runs` table.
+    runs_cols = {r[0] for r in con.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'runs'"
+    ).fetchall()}
+    if "queued_at" not in runs_cols:
+        con.execute("ALTER TABLE runs ADD COLUMN queued_at TIMESTAMP")
+    if "queue_priority" not in runs_cols:
+        con.execute("ALTER TABLE runs ADD COLUMN queue_priority INTEGER DEFAULT 0")
+    # Singleton settings table for queue paused-toggle + scheduler heartbeat.
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduler_state (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
 
 
 def lock_holder_pid(db_path: Path | str = DB_PATH) -> int | None:

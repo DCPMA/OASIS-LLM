@@ -42,6 +42,68 @@ def run(config: Path = typer.Argument(..., help="Path to run YAML config")):
     asyncio.run(run_async(cfg, con))
 
 
+@app.command("run-id")
+def run_id_cmd(
+    run_id: str = typer.Argument(..., help="run_id of a row in the runs table."),
+):
+    """Execute a run by id, loading its config from the database.
+
+    Used by the scheduler daemon to launch experiment-created runs that
+    don't have a YAML file on disk. Resets failed trials → pending so that
+    queued reruns retry the failures.
+    """
+    import json
+    con = connect()
+    row = con.execute("SELECT config_json FROM runs WHERE run_id=?", [run_id]).fetchone()
+    if row is None:
+        console.print(f"[red]No run {run_id}[/]")
+        raise typer.Exit(1)
+    payload = json.loads(row[0])
+    payload["name"] = run_id
+    cfg = RunConfig(**payload)
+    # Reset any failed trials so they get retried.
+    con.execute(
+        "UPDATE trials SET status='pending', error=NULL "
+        "WHERE run_id=? AND status='failed'",
+        [run_id],
+    )
+    pending = con.execute(
+        "SELECT count(*) FROM trials WHERE run_id=? AND status IN ('pending','failed')",
+        [run_id],
+    ).fetchone()[0]
+    console.print(f"[bold]Run[/] [cyan]{run_id}[/] — {pending} pending trial(s)")
+    if pending == 0:
+        console.print("[green]Nothing to do.[/]")
+        return
+    asyncio.run(run_async(cfg, con))
+
+
+@app.command()
+def scheduler(
+    poll_interval: float = typer.Option(5.0, help="Seconds between polls."),
+    max_parallel: int | None = typer.Option(
+        None, help="Override max_parallel; otherwise read from DB."
+    ),
+):
+    """Run the queue scheduler daemon. Blocks until SIGTERM/SIGINT.
+
+    Spawns queued runs (status='queued') as subprocesses, up to ``max_parallel``
+    in flight at once. Configure via Settings page or `--max-parallel`.
+    """
+    from . import queue as _q
+    from . import scheduler as _sch
+    con = connect()
+    if max_parallel is not None:
+        _q.set_max_parallel(con, max_parallel)
+    cap = _q.max_parallel(con)
+    console.print(
+        f"[bold]Scheduler[/] starting · max_parallel={cap} · poll={poll_interval}s"
+    )
+    con.close()
+    _sch.run_daemon(poll_interval_s=poll_interval)
+
+
+
 @app.command()
 def status(run_id: str | None = typer.Argument(None)):
     """Show run status."""
