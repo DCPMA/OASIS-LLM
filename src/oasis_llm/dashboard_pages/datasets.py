@@ -296,10 +296,41 @@ def _render_detail(dataset_id: str):
 def _render_image_grid(images, cats, dataset_id: str, is_locked: bool):
     has_excluded = any(r["excluded"] for r in images)
     show_excluded = st.toggle("Show excluded (legacy)", value=False) if has_excluded else False
-    filtered = images if show_excluded else [r for r in images if not r["excluded"]]
+    base = images if show_excluded else [r for r in images if not r["excluded"]]
+
+    # Filter controls — category multi-select + image_id substring search.
+    fcols = st.columns([3, 4, 2])
+    cat_options = sorted({cats.get(r["image_id"], "Unknown") for r in base})
+    chosen_cats = fcols[0].multiselect(
+        "Filter by category",
+        cat_options,
+        key=f"grid_cats_{dataset_id}",
+        help="Empty = all categories.",
+    )
+    search = fcols[1].text_input(
+        "Search image_id",
+        value="",
+        key=f"grid_search_{dataset_id}",
+        help="Substring match, case-insensitive.",
+    )
+    n_cols = fcols[2].selectbox(
+        "Columns", [3, 4, 5, 6, 8],
+        index=2, key=f"grid_ncols_{dataset_id}",
+    )
+
+    def _match(row) -> bool:
+        if chosen_cats and cats.get(row["image_id"], "Unknown") not in chosen_cats:
+            return False
+        if search and search.lower() not in row["image_id"].lower():
+            return False
+        return True
+
+    filtered = [r for r in base if _match(r)]
+    n_filtered = sum(1 for r in base if not _match(r))
     st.caption(
-        f"{len(filtered)} of {len(images)} images shown. "
-        + ("Use 🔁/🎲 to swap an image you don't like." if not is_locked else "")
+        f"{len(filtered)} of {len(base)} shown"
+        + (f" ({n_filtered} hidden by filter)" if n_filtered else "")
+        + ". " + ("Use 🔁/🎲 to swap an image you don't like." if not is_locked else "")
     )
 
     # Persistent swap-feedback banner — survives the rerun so the user can
@@ -318,7 +349,7 @@ def _render_image_grid(images, cats, dataset_id: str, is_locked: bool):
             del st.session_state[swap_key]
             st.rerun()
 
-    n_cols = 5
+    n_cols = int(n_cols)
     rows = [filtered[i:i + n_cols] for i in range(0, len(filtered), n_cols)]
     for row in rows:
         cols = st.columns(n_cols)
