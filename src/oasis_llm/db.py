@@ -160,6 +160,16 @@ def _migrate(con: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    # Daily counter for OpenRouter ``:free`` tier requests (1000/day cap).
+    # One row per UTC date; all :free models share a single quota.
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS or_free_daily (
+            day   DATE PRIMARY KEY,
+            count INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
 
 
 def lock_holder_pid(db_path: Path | str = DB_PATH) -> int | None:

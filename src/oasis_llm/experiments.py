@@ -215,6 +215,111 @@ def archive(con, experiment_id: str) -> None:
     )
 
 
+def update_configs(
+    con: duckdb.DuckDBPyConnection,
+    experiment_id: str,
+    configs: list[dict],
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> None:
+    """Replace a draft experiment's configs in-place.
+
+    Only allowed while the experiment is in ``draft`` status (no trials run
+    yet). The existing experiment_configs / runs / trials rows for this
+    experiment are deleted and rebuilt from the new ``configs`` list.
+
+    Each config dict mirrors the shape accepted by :func:`create`.
+    """
+    row = con.execute(
+        "SELECT status, dataset_id FROM experiments WHERE experiment_id=?",
+        [experiment_id],
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown experiment: {experiment_id}")
+    status, dataset_id = row
+    if status != "draft":
+        raise ValueError(
+            f"can only edit configs while status='draft' (current: {status!r})"
+        )
+    if not configs:
+        raise ValueError("experiment must have at least one config")
+
+    # Validate + materialise BEFORE deleting anything.
+    seen_names: set[str] = set()
+    parsed: list[tuple[str, RunConfig, dict]] = []
+    for i, c in enumerate(configs):
+        c = dict(c)
+        cfg_name = c.pop("config_name", None) or c.get("name") or f"config{i}"
+        cfg_name = _slug(cfg_name)
+        if cfg_name in seen_names:
+            raise ValueError(f"duplicate config_name: {cfg_name}")
+        seen_names.add(cfg_name)
+        rc = _materialise_config(experiment_id, cfg_name, c, dataset_id)
+        parsed.append((cfg_name, rc, c))
+
+    # Tear down old configs (and their backing runs/trials).
+    old = con.execute(
+        "SELECT run_id FROM experiment_configs WHERE experiment_id=?", [experiment_id]
+    ).fetchall()
+    for (run_id,) in old:
+        con.execute("DELETE FROM trials WHERE run_id=?", [run_id])
+        con.execute("DELETE FROM runs WHERE run_id=?", [run_id])
+    con.execute(
+        "DELETE FROM experiment_configs WHERE experiment_id=?", [experiment_id]
+    )
+
+    if name is not None or description is not None:
+        sets, params = [], []
+        if name is not None:
+            sets.append("name=?"); params.append(name)
+        if description is not None:
+            sets.append("description=?"); params.append(description)
+        params.append(experiment_id)
+        con.execute(
+            f"UPDATE experiments SET {', '.join(sets)} WHERE experiment_id=?",
+            params,
+        )
+
+    for pos, (cfg_name, rc, raw) in enumerate(parsed):
+        upsert_run(con, rc)
+        enqueue_trials(con, rc)
+        con.execute(
+            """
+            INSERT INTO experiment_configs
+              (experiment_id, config_name, config_json, run_id, position)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [experiment_id, cfg_name, json.dumps(raw), rc.name, pos],
+        )
+
+
+def duplicate(
+    con: duckdb.DuckDBPyConnection,
+    experiment_id: str,
+    new_name: str,
+    *,
+    description: str | None = None,
+) -> str:
+    """Create a fresh draft experiment by copying an existing experiment's configs.
+
+    Only the *configuration* is duplicated — the new experiment starts clean
+    with no trials and no run history. The dataset is preserved.
+    """
+    src = get(con, experiment_id)
+    if src is None:
+        raise KeyError(f"unknown experiment: {experiment_id}")
+    cfgs_payload: list[dict] = []
+    for c in src.configs:
+        payload = dict(c.config_json)
+        payload["config_name"] = c.config_name
+        cfgs_payload.append(payload)
+    return create(
+        con, new_name, src.dataset_id, cfgs_payload,
+        description=description if description is not None else src.description,
+    )
+
+
 def delete(con, experiment_id: str) -> None:
     cfgs = con.execute(
         "SELECT run_id FROM experiment_configs WHERE experiment_id=?", [experiment_id]

@@ -20,6 +20,11 @@ from .config import RunConfig
 from .images import image_data_url
 from .prompts import RATING_SCHEMA, system_prompt, user_prompt
 from .providers import litellm_model_id, setup_langfuse, setup_provider
+from .rate_limit import (
+    DailyQuotaExceeded,
+    OPENROUTER_FREE_LIMITER,
+    is_openrouter_free_model,
+)
 
 console = Console()
 
@@ -208,8 +213,14 @@ def _record_result(
 async def _call_model(
     cfg: RunConfig, dim: str, image_id: str, sample_idx: int | None = None,
     trace_id: str | None = None,
+    con: duckdb.DuckDBPyConnection | None = None,
 ) -> tuple[str, int, int | None, int | None, float | None]:
     """Single LLM call. Returns (raw_text, latency_ms, in_tok, out_tok, cost_usd)."""
+    # OpenRouter :free tier is rate-limited to 20 rpm + 1000/day. Block here
+    # before issuing the request. Raises DailyQuotaExceeded if exhausted; the
+    # runner converts that to a permanent error so the config gets cancelled.
+    if con is not None and is_openrouter_free_model(cfg.provider, cfg.model):
+        await OPENROUTER_FREE_LIMITER.acquire(con)
     provider_kwargs = setup_provider(cfg.provider, cfg.api_base)
     messages = _build_messages(cfg, dim, image_id, sample_idx)
     model_id = litellm_model_id(cfg.provider, cfg.model)
@@ -329,6 +340,43 @@ def _is_stall_error(exc: BaseException) -> bool:
     )
 
 
+# Substrings of error strings that indicate a PERMANENT (non-transient) failure.
+# These are terminal regardless of retries: model misconfigured, bad request,
+# auth issue, content policy, schema mismatch, etc.
+_PERMANENT_ERROR_MARKERS = (
+    "BadRequestError",
+    "NotFoundError",
+    "AuthenticationError",
+    "PermissionDeniedError",
+    "UnprocessableEntityError",
+    "ContentPolicyViolationError",
+    "DailyQuotaExceeded",            # OpenRouter :free daily cap reached
+    "model_not_found",
+    "invalid_request",
+    "schema_validation_error",
+    " 400 ", " 401 ", " 403 ", " 404 ", " 422 ",
+    "status_code: 400", "status_code: 401", "status_code: 403",
+    "status_code: 404", "status_code: 422",
+)
+
+
+def _is_permanent_error(error_str: str | None) -> bool:
+    """True if the error is a permanent (non-transient) failure.
+
+    Transient errors (timeouts, 5xx, 429, connection resets) return False —
+    the retry loop handles those. Permanent errors include 4xx (except 429),
+    schema/validation failures, auth/permission errors, and the
+    OpenRouter free-tier daily-quota signal.
+    """
+    if not error_str:
+        return False
+    s = error_str
+    # 429 (rate limit) is transient — exclude even if it shares a 4xx prefix.
+    if " 429 " in s or "status_code: 429" in s or "RateLimitError" in s:
+        return False
+    return any(m in s for m in _PERMANENT_ERROR_MARKERS)
+
+
 async def _worker(
     cfg: RunConfig,
     con: duckdb.DuckDBPyConnection,
@@ -337,6 +385,10 @@ async def _worker(
     stall_state: dict,
 ):
     while True:
+        # Fast exit if a sibling worker auto-cancelled the run (e.g. permanent
+        # failure rate exceeded threshold).
+        if stall_state.get("cancelled"):
+            return
         async with lock:
             trial = _claim_one(con, cfg.name)
         if trial is None:
@@ -364,7 +416,7 @@ async def _worker(
                 try:
                     raw, _, in_tok, out_tok, cost, finish_reason, response_id = await _call_model(
                         cfg, trial["dimension"], trial["image_id"], trial["sample_idx"],
-                        trace_id=trace_id,
+                        trace_id=trace_id, con=con,
                     )
                     rating, reasoning = _parse_rating(raw)
                     if not raw.strip():
@@ -390,6 +442,10 @@ async def _worker(
                 # Success or terminal error → stop retrying.
                 if error is None and rating is not None:
                     break
+                # Permanent (non-transient) errors won't recover with a retry —
+                # bail immediately so we can update the failure ratio fast.
+                if _is_permanent_error(error):
+                    break
                 if attempt + 1 < attempts:
                     delay = base * (coef ** attempt)
                     console.print(
@@ -409,6 +465,37 @@ async def _worker(
                 )
             status = "[green]ok[/]" if rating is not None else "[red]fail[/]"
             console.print(f"[dim]{cfg.name}[/] {trial['image_id']} {trial['dimension']}#{trial['sample_idx']} -> {status} rating={rating} ({latency_ms}ms)")
+
+            # ── Permanent-failure ratio: cancel the config if it's broken ──
+            # Track per-run attempt count + permanent failure count. After a
+            # warmup floor (avoids early-flake cancellation on transient bursts),
+            # if the permanent-failure ratio exceeds the configured threshold
+            # the run is marked cancelled and all workers exit.
+            stall_state["attempts"] = stall_state.get("attempts", 0) + 1
+            if _is_permanent_error(error):
+                stall_state["perm_failures"] = stall_state.get("perm_failures", 0) + 1
+            threshold = float(cfg.max_permanent_failure_rate or 0.0)
+            warmup = max(0, int(cfg.permanent_failure_warmup or 0))
+            if (
+                threshold > 0.0
+                and stall_state["attempts"] >= max(1, warmup)
+                and stall_state.get("perm_failures", 0) / stall_state["attempts"] > threshold
+            ):
+                async with lock:
+                    if not stall_state.get("cancelled"):
+                        stall_state["cancelled"] = True
+                        ratio = stall_state["perm_failures"] / stall_state["attempts"]
+                        reason = (
+                            f"auto-cancelled: permanent-failure ratio "
+                            f"{stall_state['perm_failures']}/{stall_state['attempts']} "
+                            f"({ratio:.1%}) > {threshold:.1%}"
+                        )
+                        console.print(f"[red bold]\u26d4 {cfg.name} {reason}[/]")
+                        con.execute(
+                            "UPDATE runs SET status='cancelled' WHERE run_id=?",
+                            [cfg.name],
+                        )
+                return
 
 
 async def run(cfg: RunConfig, con: duckdb.DuckDBPyConnection) -> None:

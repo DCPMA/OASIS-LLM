@@ -24,6 +24,12 @@ class RunConfig(BaseModel):
     retry_backoff_base_s: float = 1.0
     retry_backoff_coef: float = 2.0
     ollama_evict_threshold: int = 3  # consecutive Ollama timeouts/500s before evict-and-reload (0=disable)
+    # Auto-cancel a config when too many trials fail with PERMANENT (non-transient)
+    # errors — e.g. 404 model not found, 400 bad request, 422 schema validation.
+    # Avoids burning quota on a misconfigured config while the rest of the
+    # experiment proceeds. Warmup floor prevents single early-flake cancellations.
+    max_permanent_failure_rate: float = 0.05  # ratio threshold (0.0 = disable)
+    permanent_failure_warmup: int = 20         # min attempts before ratio is checked
     temperature: float | None = None
     max_tokens: int | None = None  # None = don't send max_tokens (uncapped)
     capture_reasoning: bool = True
@@ -40,6 +46,7 @@ class RunConfig(BaseModel):
         payload = self.model_dump(exclude={
             "name", "max_concurrency", "request_timeout_s", "max_retries",
             "retry_backoff_base_s", "retry_backoff_coef", "ollama_evict_threshold",
+            "max_permanent_failure_rate", "permanent_failure_warmup",
             "samples_per_image",
         })
         blob = json.dumps(payload, sort_keys=True).encode()

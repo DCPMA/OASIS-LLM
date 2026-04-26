@@ -46,25 +46,37 @@ KNOWN_MODELS: dict[str, list[str]] = {
 
 
 @st.cache_data(ttl=300)
-def _openrouter_models(vision_only: bool = False) -> list[str]:
+def _openrouter_models(vision_only: bool = False, free_only: bool = False) -> tuple[list[str], str | None]:
     """Query the OpenRouter live model catalogue. Cached for 5 minutes.
 
-    Returns model ids prefixed with ``openrouter/`` (litellm convention).
+    Returns ``(models, error)``. ``error`` is None on success; on failure it is
+    a short string the UI can render so listing failures are no longer silent.
+
+    Sends an Authorization header when ``OPENROUTER_API_KEY`` is set so we get
+    the same model set the user actually has access to (free models are
+    sometimes hidden from anonymous responses).
     """
     import urllib.request
+    headers = {"User-Agent": "oasis-llm/1.0"}
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
-        with urllib.request.urlopen(
-            "https://openrouter.ai/api/v1/models", timeout=10
-        ) as r:
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/models", headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
             payload = json.loads(r.read().decode())
-    except Exception:
-        return []
+    except Exception as e:
+        return [], f"{type(e).__name__}: {e}"
     models = payload.get("data", []) or []
     if vision_only:
         models = [
             m for m in models
             if "image" in ((m.get("architecture") or {}).get("input_modalities") or [])
         ]
+    if free_only:
+        models = [m for m in models if str(m.get("id", "")).endswith(":free")]
     # Sort: Anthropic, Google, OpenAI first (most useful for our use case),
     # then alphabetical. Skip variant-prefix entries like "~anthropic/...".
     def _sort_key(m: dict) -> tuple:
@@ -73,7 +85,7 @@ def _openrouter_models(vision_only: bool = False) -> list[str]:
         priority = {"anthropic": 0, "google": 1, "openai": 2}.get(head, 9)
         return (priority, mid.startswith("~"), mid)
     models.sort(key=_sort_key)
-    return [f"openrouter/{m['id']}" for m in models if m.get("id")]
+    return [f"openrouter/{m['id']}" for m in models if m.get("id")], None
 
 
 @st.cache_data(ttl=30)
@@ -183,17 +195,15 @@ def _probe_ollama_model(model: str, *, disable_thinking: bool = True) -> dict:
         }
 
 
-def _models_for(provider: str, *, vision_only: bool = False) -> list[str]:
+def _models_for(provider: str, *, vision_only: bool = False, free_only: bool = False) -> tuple[list[str], str | None]:
+    """Return ``(models, error)``. ``error`` is None unless the live fetch failed."""
     if provider == "ollama":
-        # Always return ALL installed models. /api/show capabilities lies for
-        # several MLX-quantized vision models, so we let the user pick anything
-        # and surface capability info as a non-blocking badge.
         live = _ollama_models()
-        return live or ["qwen3-vl:8b", "gemma3:12b", "llava:latest"]
+        return (live or ["qwen3-vl:8b", "gemma3:12b", "llava:latest"]), None
     if provider == "openrouter":
-        live = _openrouter_models(vision_only=vision_only)
-        return live or KNOWN_MODELS["openrouter"]
-    return KNOWN_MODELS.get(provider, [])
+        live, err = _openrouter_models(vision_only=vision_only, free_only=free_only)
+        return (live or KNOWN_MODELS["openrouter"]), err
+    return KNOWN_MODELS.get(provider, []), None
 
 
 def render():
@@ -202,6 +212,15 @@ def render():
         "A multi-config rating campaign against ONE approved dataset.",
         icon="🧪",
     )
+
+    # Edit / duplicate mode takes over the page until the user saves or cancels.
+    form_mode = st.session_state.get("exp_form_mode")
+    if form_mode in ("edit", "duplicate"):
+        _create_form(
+            edit_exp_id=st.session_state.get("exp_edit_id") if form_mode == "edit" else None,
+            mode=form_mode,
+        )
+        return
 
     detail_id = st.query_params.get("experiment")
     if detail_id:
@@ -312,7 +331,41 @@ def _exp_row(e):
 
 
 # ---------------------------------------------------------------------------
-def _create_form():
+def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
+    """Convert a stored ``config_json`` row back into the editor's session shape."""
+    extra = dict(cj.get("extra_params") or {})
+    disable_thinking = bool(extra.get("think") is False) if "think" in extra else True
+    return {
+        "config_name": cfg_name,
+        "config_name_auto": False,  # preserve existing slug verbatim
+        "provider": cj.get("provider", "ollama"),
+        "model": cj.get("model", ""),
+        "temperature": float(cj.get("temperature") or 0.0),
+        "samples_per_image": int(cj.get("samples_per_image", 5)),
+        "capture_reasoning": bool(cj.get("capture_reasoning", True)),
+        "cache_buster": bool(cj.get("cache_buster", True)),
+        "max_concurrency": int(cj.get("max_concurrency", 4)),
+        "max_retries": int(cj.get("max_retries", 3)),
+        "retry_backoff_base_s": float(cj.get("retry_backoff_base_s", 1.0)),
+        "retry_backoff_coef": float(cj.get("retry_backoff_coef", 2.0)),
+        "ollama_evict_threshold": int(cj.get("ollama_evict_threshold", 3)),
+        "max_permanent_failure_rate": float(cj.get("max_permanent_failure_rate", 0.05)),
+        "permanent_failure_warmup": int(cj.get("permanent_failure_warmup", 20)),
+        "request_timeout_s": int(cj.get("request_timeout_s", 60)),
+        "disable_thinking": disable_thinking,
+    }
+
+
+def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
+    """Render the experiment editor.
+
+    Modes:
+      - ``create``: blank form (default) — calls :func:`ex.create` on submit.
+      - ``edit``: pre-loads ``edit_exp_id``'s configs — calls
+        :func:`ex.update_configs` on submit. Only valid for ``status='draft'``.
+      - ``duplicate``: pre-loads source configs into a fresh draft. Submits
+        via :func:`ex.create`.
+    """
     con_ro = connect_ro()
     if con_ro is None:
         st.warning("No database yet. Create a dataset first.")
@@ -322,10 +375,35 @@ def _create_form():
         st.warning("No approved datasets. Approve one first in the Datasets tab.")
         return
 
+    # ── Pre-seed working state from an existing experiment when in edit/duplicate.
+    if mode in ("edit", "duplicate") and not st.session_state.get("exp_configs_seeded"):
+        src_id = edit_exp_id or st.session_state.get("exp_dup_src")
+        if src_id:
+            src = ex.get(con_ro, src_id)
+            if src is not None:
+                st.session_state["exp_configs"] = [
+                    _config_json_to_form_dict(c.config_name, c.config_json)
+                    for c in src.configs
+                ]
+                if mode == "edit":
+                    st.session_state["exp_default_name"] = src.name
+                    st.session_state["exp_edit_dataset"] = src.dataset_id
+                    st.session_state["exp_edit_description"] = src.description or ""
+                else:  # duplicate
+                    st.session_state["exp_default_name"] = f"{src.name}-copy"
+                    st.session_state["exp_edit_dataset"] = src.dataset_id
+                    st.session_state["exp_edit_description"] = src.description or ""
+                st.session_state["exp_configs_seeded"] = True
+
+    if mode == "edit":
+        st.info(f"✏️ Editing draft experiment `{edit_exp_id}` — saving will rebuild its configs and reset all pending trials.")
+    elif mode == "duplicate":
+        st.info("📋 Duplicating an existing experiment — submitting will create a fresh draft.")
+
     # Working state: list of config dicts
     if "exp_configs" not in st.session_state:
         default_provider = "ollama" if _ollama_models() else "openrouter"
-        default_model = _models_for(default_provider)[0]
+        default_model = _models_for(default_provider)[0][0]
         import os as _os
         try:
             _default_to = int(_os.getenv("OASIS_DEFAULT_TIMEOUT_S", "60"))
@@ -344,6 +422,8 @@ def _create_form():
                 "retry_backoff_base_s": 1.0,
                 "retry_backoff_coef": 2.0,
                 "ollama_evict_threshold": 3,
+                "max_permanent_failure_rate": 0.05,
+                "permanent_failure_warmup": 20,
                 "request_timeout_s": _default_to,
                 "disable_thinking": True,
             }
@@ -360,12 +440,30 @@ def _create_form():
     st.markdown("### Experiment metadata")
     mc1, mc2 = st.columns([3, 2])
     name = mc1.text_input("Experiment name", value=st.session_state["exp_default_name"])
-    dataset_choice = mc2.selectbox(
-        "Dataset (must be approved)",
-        [d.dataset_id for d in approved],
-        format_func=lambda x: x,
+    # In edit mode, the dataset is locked (changing it would invalidate the
+    # backing trial rows). In duplicate mode we default to the source dataset
+    # but allow the user to switch.
+    locked_ds = st.session_state.get("exp_edit_dataset") if mode == "edit" else None
+    if locked_ds is not None:
+        mc2.text_input(
+            "Dataset (locked while editing)", value=locked_ds, disabled=True,
+        )
+        dataset_choice = locked_ds
+    else:
+        default_ds = st.session_state.get("exp_edit_dataset")
+        ds_options = [d.dataset_id for d in approved]
+        idx = ds_options.index(default_ds) if default_ds in ds_options else 0
+        dataset_choice = mc2.selectbox(
+            "Dataset (must be approved)",
+            ds_options,
+            index=idx,
+            format_func=lambda x: x,
+        )
+    description = st.text_area(
+        "Description (optional)",
+        height=80,
+        value=st.session_state.get("exp_edit_description", ""),
     )
-    description = st.text_area("Description (optional)", height=80)
 
     st.markdown("---")
     st.markdown("### Configs")
@@ -390,7 +488,13 @@ def _create_form():
                 cfg.get("_vision_only", True)
                 if cfg["provider"] == "openrouter" else False
             )
-            suggestions = _models_for(cfg["provider"], vision_only=vision_only)
+            free_only = (
+                cfg.get("_free_only", False)
+                if cfg["provider"] == "openrouter" else False
+            )
+            suggestions, list_err = _models_for(
+                cfg["provider"], vision_only=vision_only, free_only=free_only,
+            )
             options = list(dict.fromkeys([cfg["model"], *suggestions, "✨ custom…"]))
             picked = cc2.selectbox(
                 "Model", options,
@@ -418,11 +522,35 @@ def _create_form():
             if cfg.get("config_name_auto", True):
                 cfg["config_name"] = _slug_from_model(cfg["model"])
             if cfg["provider"] == "openrouter":
-                cfg["_vision_only"] = st.toggle(
+                fcol1, fcol2, fcol3 = st.columns(3)
+                cfg["_vision_only"] = fcol1.toggle(
                     "Vision-capable only", value=vision_only,
                     key=f"cfgvision_{i}",
                     help="Hide text-only models from the dropdown (recommended).",
                 )
+                cfg["_free_only"] = fcol2.toggle(
+                    "Free tier only (`:free`)", value=free_only,
+                    key=f"cfgfreeonly_{i}",
+                    help=(
+                        "Show only OpenRouter `:free`-tier models. These are "
+                        "rate-limited to 20 requests/minute and 1000/day."
+                    ),
+                )
+                if fcol3.button("🔄 Refresh", key=f"cfgrefresh_{i}",
+                                help="Re-fetch the live OpenRouter catalogue (5-min cache otherwise)."):
+                    _openrouter_models.clear()
+                    st.rerun()
+                if list_err:
+                    st.warning(
+                        f"OpenRouter listing failed — falling back to curated list. "
+                        f"`{list_err}`"
+                    )
+                else:
+                    st.caption(
+                        f"📡 {len(suggestions)} OpenRouter models loaded "
+                        f"(vision_only={vision_only}, free_only={free_only}). "
+                        f"5-min cache."
+                    )
             if cfg["provider"] == "ollama" and cfg["model"] in _ollama_models():
                 caps = _ollama_capabilities(cfg["model"])
                 badges = " ".join(f"`{c}`" for c in caps) if caps else "_(none reported)_"
@@ -558,6 +686,36 @@ def _create_form():
                     "0 = disable. Ignored for non-Ollama providers."
                 ),
             )
+            pf1, pf2 = st.columns(2)
+            with pf1:
+                cfg["max_permanent_failure_rate"] = st.number_input(
+                    "Auto-cancel: permanent-fail rate threshold",
+                    min_value=0.0, max_value=1.0,
+                    value=float(cfg.get("max_permanent_failure_rate", 0.05)),
+                    step=0.01,
+                    format="%.2f",
+                    key=f"cfgpfrate_{i}",
+                    help=(
+                        "If more than this fraction of trials fail with PERMANENT "
+                        "(non-transient) errors — e.g. 404 model not found, 400 "
+                        "malformed request, 422 schema validation, content policy "
+                        "— the config is auto-cancelled and the experiment moves "
+                        "to the next one. Set 0 to disable."
+                    ),
+                )
+            with pf2:
+                cfg["permanent_failure_warmup"] = st.number_input(
+                    "Warmup attempts before threshold applies",
+                    min_value=0, max_value=200,
+                    value=int(cfg.get("permanent_failure_warmup", 20)),
+                    step=5,
+                    key=f"cfgpfwarmup_{i}",
+                    help=(
+                        "Minimum number of attempts before the permanent-fail "
+                        "ratio is checked. Prevents single early-flake errors "
+                        "from cancelling the whole config."
+                    ),
+                )
             cfg["request_timeout_s"] = st.slider(
                 "Request timeout (s)",
                 min_value=10, max_value=600,
@@ -576,7 +734,7 @@ def _create_form():
         st.session_state["exp_configs"].pop(to_remove)
         st.rerun()
 
-    btns = st.columns([1, 1, 3])
+    btns = st.columns([1, 1, 1, 2])
     with btns[0]:
         if st.button("➕ Add config", width='stretch'):
             n = len(st.session_state["exp_configs"]) + 1
@@ -593,18 +751,36 @@ def _create_form():
                 "retry_backoff_base_s": float(last.get("retry_backoff_base_s", 1.0)),
                 "retry_backoff_coef": float(last.get("retry_backoff_coef", 2.0)),
                 "ollama_evict_threshold": int(last.get("ollama_evict_threshold", 3)),
+                "max_permanent_failure_rate": float(last.get("max_permanent_failure_rate", 0.05)),
+                "permanent_failure_warmup": int(last.get("permanent_failure_warmup", 20)),
                 "request_timeout_s": int(last.get("request_timeout_s", 60)),
                 "disable_thinking": bool(last.get("disable_thinking", True)),
             })
             st.rerun()
     with btns[1]:
         if st.button("Reset", width='stretch'):
-            st.session_state.pop("exp_configs", None)
-            st.session_state.pop("exp_default_name", None)
+            for k in (
+                "exp_configs", "exp_default_name", "exp_configs_seeded",
+                "exp_edit_dataset", "exp_edit_description",
+            ):
+                st.session_state.pop(k, None)
+            st.rerun()
+    with btns[2]:
+        if mode in ("edit", "duplicate") and st.button("✖️ Cancel", width='stretch'):
+            for k in (
+                "exp_configs", "exp_default_name", "exp_configs_seeded",
+                "exp_edit_dataset", "exp_edit_description",
+                "exp_form_mode", "exp_edit_id", "exp_dup_src",
+            ):
+                st.session_state.pop(k, None)
             st.rerun()
 
     st.markdown("---")
-    if st.button("✨ Create experiment", type="primary"):
+    cta_label = {
+        "edit": "💾 Save changes",
+        "duplicate": "📋 Create duplicate",
+    }.get(mode, "✨ Create experiment")
+    if st.button(cta_label, type="primary"):
         con = connect_rw()
         if con is None:
             db_locked_warning(); return
@@ -620,17 +796,33 @@ def _create_form():
                 else:
                     c2.pop("disable_thinking", None)
                 cfgs_payload.append(c2)
-            exp_id = ex.create(
-                con, name, dataset_choice,
-                cfgs_payload,
-                description=description or None,
-            )
+            if mode == "edit" and edit_exp_id:
+                ex.update_configs(
+                    con, edit_exp_id, cfgs_payload,
+                    name=name or None,
+                    description=description or None,
+                )
+                exp_id = edit_exp_id
+            else:
+                exp_id = ex.create(
+                    con, name, dataset_choice,
+                    cfgs_payload,
+                    description=description or None,
+                )
         except Exception as e:
             st.error(f"Failed: {e}")
             return
-        st.success(f"Created experiment `{exp_id}`.")
-        st.session_state.pop("exp_configs", None)
-        st.session_state.pop("exp_default_name", None)
+        success_msg = {
+            "edit": f"Updated experiment `{exp_id}`.",
+            "duplicate": f"Duplicated to new experiment `{exp_id}`.",
+        }.get(mode, f"Created experiment `{exp_id}`.")
+        st.success(success_msg)
+        for k in (
+            "exp_configs", "exp_default_name", "exp_configs_seeded",
+            "exp_edit_dataset", "exp_edit_description",
+            "exp_form_mode", "exp_edit_id", "exp_dup_src",
+        ):
+            st.session_state.pop(k, None)
         st.query_params["experiment"] = exp_id
         st.rerun()
 
@@ -719,14 +911,55 @@ def _render_detail(exp_id: str):
         return
 
     # Run / re-run button
-    btn_cols = st.columns([1, 1, 1, 1, 2])
+    btn_cols = st.columns([1, 1, 1, 1, 1, 1, 2])
     thread_active = st.session_state.get(f"exp_thread_{exp_id}") is not None
     with btn_cols[0]:
         if st.button("▶️ Run all configs", type="primary",
                      disabled=(total_pending + total_failed == 0) or thread_active):
             _run_experiment(exp_id)
             st.rerun()
+    with btn_cols[1]:
+        # Edit configs — only available while the experiment is in draft mode
+        # (i.e. no trials have run yet). Clicking enters the edit form which
+        # rebuilds the experiment's configs/runs/trials in place on save.
+        edit_disabled = e.status != "draft" or thread_active
+        if st.button(
+            "✏️ Edit configs",
+            disabled=edit_disabled,
+            help=(
+                "Available only while the experiment is a draft (no trials run). "
+                "After running starts, configs are immutable — duplicate instead."
+                if edit_disabled else
+                "Modify this draft's configs. Saving rebuilds the backing trial rows."
+            ),
+        ):
+            for k in (
+                "exp_configs", "exp_default_name", "exp_configs_seeded",
+                "exp_edit_dataset", "exp_edit_description",
+            ):
+                st.session_state.pop(k, None)
+            st.session_state["exp_form_mode"] = "edit"
+            st.session_state["exp_edit_id"] = exp_id
+            st.rerun()
     with btn_cols[2]:
+        # Duplicate — works regardless of status. Creates a new draft seeded
+        # with this experiment's configs (trials are NOT copied).
+        if st.button(
+            "📋 Duplicate",
+            disabled=thread_active,
+            help="Create a new draft experiment seeded with these configs.",
+        ):
+            for k in (
+                "exp_configs", "exp_default_name", "exp_configs_seeded",
+                "exp_edit_dataset", "exp_edit_description",
+            ):
+                st.session_state.pop(k, None)
+            st.session_state["exp_form_mode"] = "duplicate"
+            st.session_state["exp_dup_src"] = exp_id
+            st.session_state.pop("exp_edit_id", None)
+            del st.query_params["experiment"]
+            st.rerun()
+    with btn_cols[3]:
         if thread_active and st.button("⏹️ Cancel"):
             ex.update_status(connect_rw(), exp_id, "cancelled")
             # The runner's _claim_one watches each run's status; flagging the
@@ -739,7 +972,7 @@ def _render_detail(exp_id: str):
                 )
             st.session_state.pop(f"exp_thread_{exp_id}", None)
             st.rerun()
-    with btn_cols[3]:
+    with btn_cols[4]:
         if not thread_active and st.button("🗑️ Delete"):
             st.session_state[f"confirm_delexp_{exp_id}"] = True
         if st.session_state.get(f"confirm_delexp_{exp_id}"):
