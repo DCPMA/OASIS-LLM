@@ -31,7 +31,7 @@ PAGES = {
     "Compare Runs":   "🔀",
     "Analyses":       "🔬",
     "Leaderboard":    "🏆",
-    "Export":         "📦",
+    "Import / Export": "📦",
     "Settings":       "⚙️",
 }
 
@@ -79,7 +79,7 @@ elif page == "Analyses":
 elif page == "Leaderboard":
     from oasis_llm.dashboard_pages import leaderboard
     leaderboard.render()
-elif page == "Export":
+elif page == "Import / Export":
     from oasis_llm.dashboard_pages import export as export_page
     export_page.render()
 elif page == "Settings":

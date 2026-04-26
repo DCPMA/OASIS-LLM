@@ -1,8 +1,9 @@
-"""Global Export page — bundle multiple entities into a single .zip.
+"""Import / Export page — backup, share, or restore datasets / experiments / analyses.
 
-Lets the user pick any combination of datasets / experiments / analyses
-(filtered by name + favourites) and produces a single nested zip via
+Export tab: bundle any combination into a single nested .zip via
 ``bundles.export_bundle``.
+Import tab: upload one or more bundles (single-entity OR global) and dispatch
+them to the right per-kind importer via ``bundles.import_any``.
 """
 from __future__ import annotations
 
@@ -14,16 +15,16 @@ from oasis_llm import analyses as an
 from oasis_llm import datasets as ds
 from oasis_llm import experiments as ex
 from oasis_llm import favorites as fav
-from oasis_llm.bundles import export_bundle
+from oasis_llm.bundles import export_bundle, import_any
 from oasis_llm.dashboard_pages._ui import (
-    connect_ro, db_locked_warning, kpi, page_header,
+    connect_ro, connect_rw, db_locked_warning, kpi, page_header,
 )
 
 
 def render():
     page_header(
-        "Export",
-        "Bundle datasets, experiments, and analyses into a single zip for backup or sharing.",
+        "Import / Export",
+        "Bundle datasets, experiments, and analyses for backup or sharing — or restore them on another workspace.",
         icon="📦",
     )
 
@@ -31,6 +32,14 @@ def render():
     if con is None:
         db_locked_warning(); return
 
+    tab_export, tab_import = st.tabs(["📤  Export", "📥  Import"])
+    with tab_export:
+        _render_export(con)
+    with tab_import:
+        _render_import()
+
+
+def _render_export(con):
     datasets = ds.list_all(con)
     experiments = ex.list_all(con)
     analyses = an.list_all(con)
@@ -244,3 +253,65 @@ def render():
                 st.success(f"Removed {removed} stale star(s).")
             except Exception as e:
                 st.error(f"Prune failed: {e}")
+
+
+# ─── import ────────────────────────────────────────────────────────────────
+def _render_import():
+    st.caption(
+        "Upload one or more bundle zips. Each can be a single dataset, "
+        "experiment, analysis, or a global multi-entity bundle — the kind is "
+        "auto-detected from `manifest.json`. Imports run in the order: "
+        "datasets → experiments → analyses, so cross-references resolve "
+        "correctly."
+    )
+    uploads = st.file_uploader(
+        "Select bundle zips",
+        type=["zip"],
+        accept_multiple_files=True,
+        key="import_uploads",
+    )
+    overwrite = st.checkbox(
+        "Overwrite existing rows",
+        value=False,
+        key="import_overwrite",
+        help=(
+            "When ON, existing dataset/experiment/analysis rows with the "
+            "same id are deleted and replaced. When OFF (default), they "
+            "are skipped and listed under 'skipped'."
+        ),
+    )
+
+    if not uploads:
+        st.info("Drop one or more `.zip` bundles above to enable import.")
+        return
+
+    st.caption(f"Queued: **{len(uploads)}** bundle(s)")
+    if not st.button(
+        f"📥 Import {len(uploads)} bundle(s)",
+        type="primary", width='stretch',
+    ):
+        return
+
+    con = connect_rw()
+    if con is None:
+        db_locked_warning(); return
+
+    n_ok = 0
+    n_fail = 0
+    for up in uploads:
+        with st.expander(f"📦 {up.name}", expanded=True):
+            try:
+                blob = up.read()
+                summary = import_any(con, blob, overwrite=overwrite)
+                n_ok += 1
+                st.success(f"Imported `{up.name}` ({summary.get('kind')})")
+                st.json(summary)
+            except Exception as e:
+                n_fail += 1
+                st.error(f"Failed: {type(e).__name__}: {e}")
+
+    st.markdown("---")
+    if n_fail == 0:
+        st.success(f"All {n_ok} bundle(s) imported.")
+    else:
+        st.warning(f"{n_ok} succeeded, {n_fail} failed — see details above.")

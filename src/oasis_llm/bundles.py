@@ -586,6 +586,287 @@ def import_experiment(
     return summary
 
 
+# ─── dataset import ────────────────────────────────────────────────────────
+def import_dataset(
+    con: duckdb.DuckDBPyConnection,
+    zip_bytes: bytes,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Import a bundle produced by ``export_dataset``.
+
+    By default skips datasets whose ``dataset_id`` already exists. With
+    ``overwrite=True``, deletes the existing dataset row + its
+    ``dataset_images`` and re-imports.
+
+    Image files (``images/<id>.jpg``) are extracted into ``IMAGES_DIR`` only
+    if the file isn't already there — never overwrites a local image.
+    """
+    summary: dict[str, Any] = {
+        "kind": "dataset",
+        "dataset_id": None,
+        "imported_dataset_images": 0,
+        "imported_image_files": 0,
+        "skipped": [],
+    }
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+        names = z.namelist()
+        manifest = json.loads(z.read("manifest.json"))
+        if manifest.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported bundle schema_version: {manifest.get('schema_version')}"
+                f" (this code supports v{SCHEMA_VERSION})"
+            )
+        dataset = json.loads(z.read("dataset.json"))
+        dataset_id = dataset["dataset_id"]
+        summary["dataset_id"] = dataset_id
+        images_csv = (
+            z.read("dataset_images.csv").decode()
+            if "dataset_images.csv" in names else ""
+        )
+
+        if overwrite:
+            con.execute(
+                "DELETE FROM dataset_images WHERE dataset_id=?", [dataset_id]
+            )
+            con.execute("DELETE FROM datasets WHERE dataset_id=?", [dataset_id])
+
+        existing = con.execute(
+            "SELECT 1 FROM datasets WHERE dataset_id=?", [dataset_id]
+        ).fetchone()
+        if not existing:
+            con.execute(
+                """
+                INSERT INTO datasets
+                  (dataset_id, name, description, status, source,
+                   generation_params, created_at, approved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    dataset_id, dataset.get("name") or dataset_id,
+                    dataset.get("description"),
+                    dataset.get("status") or "approved",
+                    dataset.get("source") or "imported",
+                    dataset.get("generation_params"),
+                    dataset.get("created_at"), dataset.get("approved_at"),
+                ],
+            )
+        else:
+            summary["skipped"].append(f"dataset {dataset_id} already exists")
+
+        if images_csv.strip():
+            dimg = pd.read_csv(io.StringIO(images_csv))
+            for _, row in dimg.iterrows():
+                try:
+                    con.execute(
+                        """
+                        INSERT INTO dataset_images
+                          (dataset_id, image_id, excluded, note)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [
+                            row["dataset_id"], row["image_id"],
+                            bool(row.get("excluded", False)),
+                            row.get("note"),
+                        ],
+                    )
+                    summary["imported_dataset_images"] += 1
+                except Exception as e:
+                    summary["skipped"].append(
+                        f"dataset_image {row['image_id']}: {e}"
+                    )
+
+        # Optional bundled image files
+        if any(n.startswith("images/") for n in names):
+            from .images import IMAGES_DIR
+            IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+            for n in names:
+                if not n.startswith("images/") or n.endswith("/"):
+                    continue
+                fname = n[len("images/"):]
+                target = IMAGES_DIR / fname
+                if target.exists():
+                    continue
+                target.write_bytes(z.read(n))
+                summary["imported_image_files"] += 1
+
+    return summary
+
+
+# ─── analysis import ───────────────────────────────────────────────────────
+def import_analysis(
+    con: duckdb.DuckDBPyConnection,
+    zip_bytes: bytes,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Import a bundle produced by ``export_analysis``.
+
+    Imports the analysis row and its ``analysis_runs`` membership. The runs
+    themselves are NOT imported (analysis bundles intentionally don't carry
+    them — a missing run_id is recorded under ``skipped``).
+    """
+    summary: dict[str, Any] = {
+        "kind": "analysis",
+        "analysis_id": None,
+        "imported_runs": 0,
+        "skipped": [],
+    }
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+        names = z.namelist()
+        manifest = json.loads(z.read("manifest.json"))
+        if manifest.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported bundle schema_version: {manifest.get('schema_version')}"
+                f" (this code supports v{SCHEMA_VERSION})"
+            )
+        analysis = json.loads(z.read("analysis.json"))
+        runs_csv = (
+            z.read("analysis_runs.csv").decode()
+            if "analysis_runs.csv" in names else ""
+        )
+
+    aid = analysis["analysis_id"]
+    summary["analysis_id"] = aid
+
+    if overwrite:
+        con.execute("DELETE FROM analysis_runs WHERE analysis_id=?", [aid])
+        con.execute("DELETE FROM analyses WHERE analysis_id=?", [aid])
+
+    existing = con.execute(
+        "SELECT 1 FROM analyses WHERE analysis_id=?", [aid]
+    ).fetchone()
+    if not existing:
+        con.execute(
+            """
+            INSERT INTO analyses
+              (analysis_id, name, description, dataset_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                aid, analysis.get("name") or aid,
+                analysis.get("description"),
+                analysis.get("dataset_id"),
+                analysis.get("created_at"),
+            ],
+        )
+    else:
+        summary["skipped"].append(f"analysis {aid} already exists")
+
+    if runs_csv.strip():
+        rdf = pd.read_csv(io.StringIO(runs_csv))
+        for _, row in rdf.iterrows():
+            run_exists = con.execute(
+                "SELECT 1 FROM runs WHERE run_id=?", [row["run_id"]]
+            ).fetchone()
+            if not run_exists:
+                summary["skipped"].append(
+                    f"run {row['run_id']} not present locally; "
+                    "membership row skipped"
+                )
+                continue
+            try:
+                con.execute(
+                    """
+                    INSERT INTO analysis_runs
+                      (analysis_id, run_id, label, added_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    [
+                        row["analysis_id"], row["run_id"],
+                        row.get("label"), row.get("added_at"),
+                    ],
+                )
+                summary["imported_runs"] += 1
+            except Exception as e:
+                summary["skipped"].append(
+                    f"analysis_run {row['run_id']}: {e}"
+                )
+
+    return summary
+
+
+# ─── global / multi-bundle import ──────────────────────────────────────────
+def import_bundle(
+    con: duckdb.DuckDBPyConnection,
+    zip_bytes: bytes,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Import a global bundle produced by ``export_bundle``.
+
+    Iterates through ``datasets/*.zip``, ``experiments/*.zip``,
+    ``analyses/*.zip`` (in that order, so referenced datasets exist before
+    their experiments/analyses) and dispatches to the per-kind importers.
+    Per-entry failures are caught and recorded under ``failures``; the import
+    continues.
+    """
+    summary: dict[str, Any] = {
+        "kind": "global",
+        "datasets": [],
+        "experiments": [],
+        "analyses": [],
+        "failures": [],
+    }
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+        names = z.namelist()
+        manifest = json.loads(z.read("manifest.json"))
+        if manifest.get("kind") != "global":
+            raise ValueError(
+                f"not a global bundle (kind={manifest.get('kind')!r}); "
+                "use import_any() for auto-detection"
+            )
+
+        def _process(prefix: str, fn, key: str) -> None:
+            for n in sorted(names):
+                if not n.startswith(prefix) or not n.endswith(".zip"):
+                    continue
+                inner = z.read(n)
+                try:
+                    sub = fn(con, inner, overwrite=overwrite)
+                    summary[key].append(sub)
+                except Exception as e:
+                    summary["failures"].append(
+                        {"entry": n, "error": f"{type(e).__name__}: {e}"}
+                    )
+
+        _process("datasets/", import_dataset, "datasets")
+        _process("experiments/", import_experiment, "experiments")
+        _process("analyses/", import_analysis, "analyses")
+
+    return summary
+
+
+def import_any(
+    con: duckdb.DuckDBPyConnection,
+    zip_bytes: bytes,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Auto-detect the bundle kind from ``manifest.json`` and dispatch.
+
+    Returns the summary from the per-kind importer, plus a ``kind`` key.
+    Bundles without a ``kind`` field are treated as legacy experiment
+    bundles.
+    """
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+        manifest = json.loads(z.read("manifest.json"))
+    kind = manifest.get("kind") or "experiment"
+    if kind == "global":
+        return import_bundle(con, zip_bytes, overwrite=overwrite)
+    if kind == "dataset":
+        return import_dataset(con, zip_bytes, overwrite=overwrite)
+    if kind == "analysis":
+        return import_analysis(con, zip_bytes, overwrite=overwrite)
+    if kind == "experiment":
+        out = import_experiment(con, zip_bytes, overwrite=overwrite)
+        out.setdefault("kind", "experiment")
+        return out
+    raise ValueError(f"unknown bundle kind: {kind!r}")
+
+
 # ─── helpers ────────────────────────────────────────────────────────────────
 def _iso(value) -> str | None:
     if value is None:
