@@ -867,6 +867,49 @@ def import_any(
     raise ValueError(f"unknown bundle kind: {kind!r}")
 
 
+def safe_import(
+    con: duckdb.DuckDBPyConnection,
+    zip_bytes: bytes,
+    *,
+    overwrite: bool = False,
+    label: str = "pre-import",
+) -> dict[str, Any]:
+    """Atomic, crash-safe wrapper around :func:`import_any`.
+
+    Steps:
+
+    1. ``CHECKPOINT`` and snapshot the live DB to ``data/recovery/`` (rotating).
+    2. ``BEGIN`` a transaction.
+    3. Run :func:`import_any`.
+    4. ``COMMIT`` then ``CHECKPOINT`` so the main file is fully consistent
+       on disk before returning. This prevents the
+       ``Failure while replaying WAL file`` error class.
+    5. On any exception, ``ROLLBACK`` and re-raise. The pre-import snapshot
+       remains in ``data/recovery/`` as an explicit safe-point regardless
+       of success.
+
+    The caller's connection is reused — no reconnect happens, so
+    Streamlit's cached read-only connections stay valid.
+    """
+    from .db import snapshot_db
+    snap = snapshot_db(con, label=label)
+    con.execute("BEGIN")
+    try:
+        summary = import_any(con, zip_bytes, overwrite=overwrite)
+    except Exception:
+        try:
+            con.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    con.execute("COMMIT")
+    con.execute("CHECKPOINT")
+    if snap is not None:
+        summary = dict(summary)
+        summary["pre_import_snapshot"] = str(snap)
+    return summary
+
+
 # ─── helpers ────────────────────────────────────────────────────────────────
 def _iso(value) -> str | None:
     if value is None:

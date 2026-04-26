@@ -304,14 +304,46 @@ def get_con():
     use one read-write connection for everything. Returns ``None`` if another
     OS process holds an exclusive lock on the file.
     """
+    def _is_lock_error(exc: BaseException) -> bool:
+        message = str(exc)
+        return (
+            "Could not set lock on file" in message
+            or "Conflicting lock is held" in message
+        )
+
+    def _render_open_error(exc: BaseException) -> None:
+        message = str(exc)
+        wal_path = Path(f"{DB_PATH}.wal")
+        if "Failure while replaying WAL file" in message:
+            st.error(
+                "DuckDB could not replay the local WAL file. "
+                "The main database file may be stale while newer writes remain only in the WAL."
+            )
+            st.caption(
+                f"Back up both `{DB_PATH}` and `{wal_path}` before recovery. "
+                "Removing the WAL can discard any imports or writes that were not checkpointed yet."
+            )
+        else:
+            st.error(f"Failed to open database: {type(exc).__name__}: {message}")
+        with st.expander("Technical details"):
+            st.code(f"{type(exc).__name__}: {message}")
+
     @st.cache_resource(show_spinner=False)
     def _open():
         from oasis_llm.db import connect
         return connect()
     try:
         con = _open()
-    except duckdb.IOException:
+    except duckdb.IOException as exc:
         st.cache_resource.clear()
+        if not _is_lock_error(exc):
+            _render_open_error(exc)
+            st.stop()
+        return None
+    except duckdb.InternalException as exc:
+        st.cache_resource.clear()
+        _render_open_error(exc)
+        st.stop()
         return None
     # Auto-heal: re-run lightweight migrations on every retrieval so a
     # cached connection picks up tables added by newer code without

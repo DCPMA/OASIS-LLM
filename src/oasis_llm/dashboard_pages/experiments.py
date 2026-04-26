@@ -337,6 +337,7 @@ def _render_import():
             db_locked_warning(); return
         try:
             summary = import_experiment(con, uploaded.read(), overwrite=overwrite)
+            con.execute("CHECKPOINT")
         except Exception as e:
             st.error(f"Import failed: {e}")
             return

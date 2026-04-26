@@ -15,7 +15,7 @@ from oasis_llm import analyses as an
 from oasis_llm import datasets as ds
 from oasis_llm import experiments as ex
 from oasis_llm import favorites as fav
-from oasis_llm.bundles import export_bundle, import_any
+from oasis_llm.bundles import export_bundle, safe_import
 from oasis_llm.dashboard_pages._ui import (
     connect_ro, connect_rw, db_locked_warning, kpi, page_header,
 )
@@ -302,7 +302,11 @@ def _render_import():
         with st.expander(f"📦 {up.name}", expanded=True):
             try:
                 blob = up.read()
-                summary = import_any(con, blob, overwrite=overwrite)
+                summary = safe_import(
+                    con, blob,
+                    overwrite=overwrite,
+                    label=f"pre-import-{up.name}",
+                )
                 n_ok += 1
                 st.success(f"Imported `{up.name}` ({summary.get('kind')})")
                 st.json(summary)

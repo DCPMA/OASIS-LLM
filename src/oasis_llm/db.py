@@ -1,10 +1,14 @@
 """DuckDB schema and connection helpers."""
 from __future__ import annotations
 
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 import duckdb
 
 DB_PATH = Path("data/llm_runs.duckdb")
+RECOVERY_DIR = DB_PATH.parent / "recovery"
+RECOVERY_KEEP = 5  # keep last N rotating snapshots
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -229,4 +233,45 @@ def lock_holder_pid(db_path: Path | str = DB_PATH) -> int | None:
         return int(m.group(1)) if m else -1
     except Exception:
         return None
+
+
+def snapshot_db(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    label: str = "snapshot",
+    db_path: Path | str = DB_PATH,
+    keep: int = RECOVERY_KEEP,
+) -> Path | None:
+    """Checkpoint and copy the live DB file to ``data/recovery/`` with a
+    timestamped, never-overwriting name. Rotates so only ``keep`` files
+    remain (oldest deleted first).
+
+    Returns the new snapshot path, or ``None`` if the source file is missing.
+    Failures are swallowed and reported via return value of ``None`` only
+    when the source file doesn't exist; other I/O errors propagate so the
+    caller can decide whether to abort the upcoming write.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return None
+    # Flush WAL → main file so the snapshot is self-contained.
+    try:
+        con.execute("CHECKPOINT")
+    except Exception:
+        # Best-effort: even an un-checkpointed copy is better than nothing.
+        pass
+    RECOVERY_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in label)
+    dst = RECOVERY_DIR / f"{db_path.name}.{ts}.{safe_label}.bak"
+    shutil.copy2(db_path, dst)
+    # Rotate: keep only the newest `keep` files matching this stem.
+    pattern = f"{db_path.name}.*.bak"
+    snaps = sorted(RECOVERY_DIR.glob(pattern), key=lambda p: p.stat().st_mtime)
+    for old in snaps[:-keep]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return dst
 
