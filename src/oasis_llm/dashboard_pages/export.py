@@ -91,6 +91,17 @@ def render():
     # ─── three side-by-side picker columns ─────────────────────────────────
     pick_cols = st.columns(3)
 
+    def _bulk_buttons(kind: str, ids: list[str]) -> None:
+        b1, b2 = st.columns(2)
+        if b1.button("✅ All visible", key=f"exp_all_{kind}", width='stretch'):
+            for x in ids:
+                st.session_state[f"exp_pick_{kind}_{x}"] = True
+            st.rerun()
+        if b2.button("⬜ Clear", key=f"exp_none_{kind}", width='stretch'):
+            for x in ids:
+                st.session_state[f"exp_pick_{kind}_{x}"] = False
+            st.rerun()
+
     with pick_cols[0]:
         st.markdown("### 📁 Datasets")
         rows = [
@@ -98,7 +109,9 @@ def render():
             if _match(d.dataset_id, d.name, d.description)
             and (not starred_only or d.dataset_id in starred_ds)
         ]
-        if not rows:
+        if rows:
+            _bulk_buttons("dataset", [d.dataset_id for d in rows])
+        else:
             st.caption("No datasets match the current filter.")
         for d in rows:
             star = "⭐ " if d.dataset_id in starred_ds else ""
@@ -114,7 +127,9 @@ def render():
             if _match(e.experiment_id, e.name, e.description)
             and (not starred_only or e.experiment_id in starred_ex)
         ]
-        if not rows:
+        if rows:
+            _bulk_buttons("experiment", [e.experiment_id for e in rows])
+        else:
             st.caption("No experiments match the current filter.")
         for e in rows:
             star = "⭐ " if e.experiment_id in starred_ex else ""
@@ -130,7 +145,9 @@ def render():
             if _match(a.analysis_id, a.name, a.description)
             and (not starred_only or a.analysis_id in starred_an)
         ]
-        if not rows:
+        if rows:
+            _bulk_buttons("analysis", [a.analysis_id for a in rows])
+        else:
             st.caption("No analyses match the current filter.")
         for a in rows:
             star = "⭐ " if a.analysis_id in starred_an else ""

@@ -11,7 +11,8 @@ import streamlit as st
 
 from oasis_llm import run_control as rc
 from oasis_llm.dashboard_pages._ui import (
-    connect_rw, db_locked_warning, kpi, page_header, status_pill,
+    connect_rw, db_locked_warning, kpi, page_header, star_button,
+    starred_filter_toggle, status_pill,
 )
 from oasis_llm.images import image_path
 
@@ -44,12 +45,24 @@ def render():
         "Each run = one config × one dataset. Inspect, control, export.",
         icon="📊",
     )
-    con = connect_rw()
-    if con is None:
-        db_locked_warning()
+    detail_id = st.query_params.get("run")
+    if detail_id:
+        _render_detail(detail_id)
         return
+    _render_list()
 
-    runs = con.execute(
+
+def _model_of(cfg_json: str | None) -> str:
+    if not cfg_json:
+        return "?"
+    try:
+        return json.loads(cfg_json).get("model") or "?"
+    except Exception:
+        return "?"
+
+
+def _fetch_runs(con):
+    return con.execute(
         """
         SELECT r.run_id, r.status, r.created_at, r.finished_at,
                count(t.image_id) AS total,
@@ -64,39 +77,73 @@ def render():
         ORDER BY r.created_at DESC NULLS LAST
         """
     ).fetchall()
-    if not runs:
-        st.info("No runs yet.")
+
+
+def _render_list():
+    con = connect_rw()
+    if con is None:
+        db_locked_warning()
         return
 
-    # Per-run model id (parsed from config_json) for filtering
-    def _model_of(cfg_json: str | None) -> str:
-        if not cfg_json:
-            return "?"
-        try:
-            return json.loads(cfg_json).get("model") or "?"
-        except Exception:
-            return "?"
+    runs = _fetch_runs(con)
+
+    # KPIs
+    n_total = len(runs)
+    n_running = sum(1 for r in runs if r[1] == "running")
+    n_done = sum(1 for r in runs if r[1] == "done")
+    n_failed = sum(1 for r in runs if r[1] == "failed")
+    cols = st.columns(4)
+    cols[0].markdown(kpi("Runs", n_total), unsafe_allow_html=True)
+    cols[1].markdown(kpi("Running", n_running), unsafe_allow_html=True)
+    cols[2].markdown(kpi("Done", n_done), unsafe_allow_html=True)
+    cols[3].markdown(kpi("Failed", n_failed), unsafe_allow_html=True)
+
+    if not runs:
+        st.markdown("---")
+        st.info("No runs yet.")
+        return
 
     run_models = {r[0]: _model_of(r[10]) for r in runs}
     available_models = sorted({m for m in run_models.values() if m != "?"})
 
-    fc1, fc2 = st.columns([1, 1])
-    model_filter = fc1.multiselect(
+    st.markdown("---")
+    fc1, fc2, fc3 = st.columns([2, 2, 2])
+    with fc1:
+        search = st.text_input(
+            "🔎 Search by run id",
+            value="",
+            key="runs_search",
+            placeholder="substring match",
+        )
+    model_filter = fc2.multiselect(
         "Filter by model",
         available_models,
         default=[],
         help="Leave empty to show all runs.",
     )
-    status_filter = fc2.multiselect(
+    status_filter = fc3.multiselect(
         "Filter by status",
         ["running", "paused", "done", "failed", "pending"],
         default=[],
     )
+    starred_only = starred_filter_toggle("run")
+
+    if starred_only:
+        from oasis_llm import favorites as _fav
+        star_set = _fav.starred_set(con, "run")
+    else:
+        star_set = None
+
+    needle = search.strip().lower()
 
     def _passes(r) -> bool:
+        if needle and needle not in r[0].lower():
+            return False
         if model_filter and run_models.get(r[0]) not in model_filter:
             return False
         if status_filter and r[1] not in status_filter:
+            return False
+        if star_set is not None and r[0] not in star_set:
             return False
         return True
 
@@ -105,14 +152,72 @@ def render():
         st.info("No runs match the selected filters.")
         return
 
-    options = {
-        f"{r[0]}  ·  {run_models.get(r[0], '?')}  ({r[1]}, {r[5] or 0}/{r[4] or 0})": r[0]
-        for r in visible_runs
-    }
-    label = st.selectbox("Select run", list(options.keys()))
-    run_id = options[label]
+    for r in visible_runs:
+        _row_card(r, run_models.get(r[0], "?"))
 
-    row = next(r for r in runs if r[0] == run_id)
+
+def _row_card(r, model: str) -> None:
+    run_id, status, created, _finished, total, done, failed, _pending, _running, cost, _cfg = r
+    total = total or 0
+    done = done or 0
+    failed = failed or 0
+    pct = (100 * done / total) if total else 0.0
+
+    cols = st.columns([0.4, 4, 2, 1.6, 2, 1.6, 1.4])
+    with cols[0]:
+        star_button("run", run_id, key_suffix="list")
+    cols[1].markdown(
+        f"<div style='font-weight:600; font-size:1.0rem;'>{run_id}</div>"
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>{model}</div>",
+        unsafe_allow_html=True,
+    )
+    cols[2].markdown(status_pill(status), unsafe_allow_html=True)
+    cols[3].markdown(
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>progress</div>"
+        f"<div style='font-weight:600;'>{done}/{total}</div>"
+        f"<div style='color:#8a8aa0; font-size:0.72rem;'>{pct:.0f}%</div>",
+        unsafe_allow_html=True,
+    )
+    cols[4].markdown(
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>created</div>"
+        f"<div style='font-size:0.85rem;'>{str(created)[:19] if created else '—'}</div>"
+        f"<div style='color:#8a8aa0; font-size:0.72rem;'>{failed} failed</div>",
+        unsafe_allow_html=True,
+    )
+    cols[5].markdown(
+        f"<div style='color:#8a8aa0; font-size:0.78rem;'>cost</div>"
+        f"<div style='font-weight:600;'>${cost:.4f}</div>",
+        unsafe_allow_html=True,
+    )
+    if cols[6].button("Open ›", key=f"open_run_{run_id}", width='stretch'):
+        st.query_params["run"] = run_id
+        st.rerun()
+    st.markdown("<hr style='margin:0.5rem 0;'>", unsafe_allow_html=True)
+
+
+def _render_detail(run_id: str):
+    con = connect_rw()
+    if con is None:
+        db_locked_warning()
+        return
+
+    runs = _fetch_runs(con)
+    row = next((r for r in runs if r[0] == run_id), None)
+    if row is None:
+        st.error(f"Unknown run `{run_id}`.")
+        if st.button("← Back to runs"):
+            del st.query_params["run"]
+            st.rerun()
+        return
+
+    top = st.columns([6, 1, 1])
+    top[0].markdown(f"### 📊 {run_id}")
+    with top[1]:
+        star_button("run", run_id, key_suffix="detail")
+    if top[2].button("← All", width='stretch', key="run_back"):
+        del st.query_params["run"]
+        st.rerun()
+
     _, status, created, finished, total, done, failed, pending, running, cost, _cfg_json = row
     total = total or 0
     done = done or 0
