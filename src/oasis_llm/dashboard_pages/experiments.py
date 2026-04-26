@@ -689,26 +689,6 @@ def _render_detail(exp_id: str):
                      disabled=(total_pending + total_failed == 0) or thread_active):
             _run_experiment(exp_id)
             st.rerun()
-    with btn_cols[1]:
-        if st.button(
-            "⏭️ Queue experiment",
-            disabled=(total_pending + total_failed == 0) or thread_active,
-            help="Add every pending config to the run queue. The scheduler "
-            "(Queue page) will pick them up one at a time.",
-        ):
-            from oasis_llm import queue as _q
-            con = connect_rw()
-            if con is None: db_locked_warning(); return
-            try:
-                ids = _q.enqueue_experiment(con, exp_id)
-            except Exception as ee:
-                st.error(f"Failed: {ee}")
-            else:
-                if ids:
-                    st.success(f"Queued {len(ids)} config(s). Open the Queue page to monitor.")
-                else:
-                    st.info("Nothing to queue (all configs already done or running).")
-                st.rerun()
     with btn_cols[2]:
         if thread_active and st.button("⏹️ Cancel"):
             ex.update_status(connect_rw(), exp_id, "cancelled")

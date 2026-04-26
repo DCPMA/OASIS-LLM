@@ -27,7 +27,6 @@ PAGES = {
     "Datasets":       "📁",
     "Image Explorer": "🖼️",
     "Experiments":    "🧪",
-    "Queue":          "⏭️",
     "Runs":           "📊",
     "Compare Runs":   "🔀",
     "Analyses":       "🔬",
@@ -67,9 +66,6 @@ elif page == "Image Explorer":
 elif page == "Experiments":
     from oasis_llm.dashboard_pages import experiments as experiments_page
     experiments_page.render()
-elif page == "Queue":
-    from oasis_llm.dashboard_pages import queue as queue_page
-    queue_page.render()
 elif page == "Runs":
     from oasis_llm.dashboard_pages import runs
     runs.render()
