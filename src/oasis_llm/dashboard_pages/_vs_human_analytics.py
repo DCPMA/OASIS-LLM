@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 
 from oasis_llm import analyses as an
+from oasis_llm.images import image_path
 from oasis_llm.dashboard_pages._ui import (
     apply_blinding,
     blind_models_toggle,
@@ -289,6 +290,7 @@ def render_analytics(
         "🚨 Outliers",
         "🔁 Inter-LLM agreement",
         "🧮 Cat × Model ANOVA",
+        "🔬 Sample size & power",
     ])
 
     # ── Tab 1: descriptives ──
@@ -334,7 +336,10 @@ def render_analytics(
     # ── Tab 2: t-tests (in-page implementation respects current filter) ──
     with tabs[1]:
         st.caption("Per-image paired t-test (LLM image-mean vs OASIS human image-mean).")
-        rows = _ttest_rows(per_img_run, scope=scope, n_boot=int(n_boot))
+        per_img_tt = _exclude_models_widget(
+            per_img_run, sel_models_disp, key=f"{sidebar_prefix}_excl_tt",
+        )
+        rows = _ttest_rows(per_img_tt, scope=scope, n_boot=int(n_boot))
         if not rows:
             st.info("Not enough data for a paired t-test under the current filter.")
         else:
@@ -353,7 +358,10 @@ def render_analytics(
     # ── Tab 3: regression LLM = a + b·Human ──
     with tabs[2]:
         st.caption("OLS regression LLM = a + b · Human (perfect calibration: a=0, b=1).")
-        rows = _regression_rows(per_img_run, scope=scope)
+        per_img_reg = _exclude_models_widget(
+            per_img_run, sel_models_disp, key=f"{sidebar_prefix}_excl_reg",
+        )
+        rows = _regression_rows(per_img_reg, scope=scope)
         if not rows:
             st.info("Not enough data for a regression fit.")
         else:
@@ -389,17 +397,22 @@ def render_analytics(
     # ── Tab 6: outliers ──
     with tabs[5]:
         st.caption("Top images where the LLM mean disagrees most with the human mean.")
-        top_k = st.slider("Top K", 5, 100, 20, 5)
+        per_img_out = _exclude_models_widget(
+            per_img_run, sel_models_disp, key=f"{sidebar_prefix}_excl_out",
+        )
+        oc1, oc2 = st.columns([3, 2])
+        top_k = oc1.slider("Top K", 5, 100, 20, 5, key=f"{sidebar_prefix}_topk")
+        show_thumbs = oc2.checkbox("🖼️ Show thumbnails", value=True, key=f"{sidebar_prefix}_thumbs")
         if scope.startswith("Pooled"):
             agg = (
-                per_img_run.groupby(["image_id", "category", "dimension"], as_index=False)
+                per_img_out.groupby(["image_id", "category", "dimension"], as_index=False)
                 .agg(llm_mean=("llm_mean", "mean"),
                      human_value=("human_value", "first"),
                      k_runs=("run_id", "nunique"))
             )
             agg["delta"] = agg["llm_mean"] - agg["human_value"]
         else:
-            agg = per_img_run.copy()
+            agg = per_img_out.copy()
             agg["delta"] = agg["llm_mean"] - agg["human_value"]
         agg["abs_delta"] = agg["delta"].abs()
         top = (
@@ -417,6 +430,8 @@ def render_analytics(
         kc[2].metric("|Δ| > 1.0", n_severe)
         st.dataframe(df_top, use_container_width=True, hide_index=True)
         _csv_download(df_top, filename="outliers.csv", key="dl_outliers")
+        if show_thumbs and not df_top.empty:
+            _render_outlier_thumbnails(df_top)
 
     # ── Tab 7: inter-LLM agreement ──
     with tabs[6]:
@@ -437,42 +452,14 @@ def render_analytics(
 
     # ── Tab 8: ANOVA Category × Model ──
     with tabs[7]:
-        try:
-            import statsmodels.api as sm  # noqa: F401
-            import statsmodels.formula.api as smf
-        except Exception:
-            st.info("Install `statsmodels` to enable the Category × Model ANOVA.")
-            return
-        df_an = per_img_run.copy()
-        df_an["abs_err"] = (df_an["llm_mean"] - df_an["human_value"]).abs()
-        rows = []
-        for dim, sub in df_an.groupby("dimension"):
-            sub = sub.dropna(subset=["abs_err", "category", "model"])
-            if sub["category"].nunique() < 2 or sub["model"].nunique() < 2 or len(sub) < 8:
-                continue
-            try:
-                model = smf.ols("abs_err ~ C(category) + C(model) + C(category):C(model)", data=sub).fit()
-                aov = sm.stats.anova_lm(model, typ=2)
-            except Exception as e:
-                st.warning(f"ANOVA failed for {dim}: {e}")
-                continue
-            ss_total = float(aov["sum_sq"].sum())
-            for fac, r in aov.iterrows():
-                rows.append({
-                    "dimension": dim,
-                    "factor": fac,
-                    "df": float(r["df"]),
-                    "ss": float(r["sum_sq"]),
-                    "F": float(r["F"]) if "F" in r and not pd.isna(r["F"]) else float("nan"),
-                    "p": float(r["PR(>F)"]) if "PR(>F)" in r and not pd.isna(r["PR(>F)"]) else float("nan"),
-                    "eta_sq": float(r["sum_sq"]) / ss_total if ss_total > 0 else float("nan"),
-                })
-        if not rows:
-            st.info("Need at least 2 models × 2 categories for the ANOVA.")
-        else:
-            df_anova = pd.DataFrame(rows).round(4)
-            st.dataframe(df_anova, use_container_width=True, hide_index=True)
-            _csv_download(df_anova, filename="anova_category_model.csv", key="dl_anova")
+        _render_anova_tab(per_img_run)
+
+    # ── Tab 9: Sample size & power ──
+    with tabs[8]:
+        _render_power_tab(
+            per_img_run, sel_models_disp,
+            key_prefix=f"{sidebar_prefix}_power",
+        )
 
 
 # ─── tab helpers ───────────────────────────────────────────────────────────
@@ -704,3 +691,214 @@ def _inter_llm_rows(per_img_run: pd.DataFrame) -> list[dict]:
             "mean_per_image_sd": float(wide.std(axis=1, ddof=1).mean()),
         })
     return rows
+
+
+# ─── helpers added by analytics merge (per-tab exclude / thumbs / power / anova) ───
+def _exclude_models_widget(
+    per_img_run: pd.DataFrame,
+    sel_models_disp: list[str],
+    *,
+    key: str,
+) -> pd.DataFrame:
+    """Render an 'exclude models from this tab' multiselect. Returns a filtered
+    copy of ``per_img_run`` with the chosen models dropped.
+
+    Honours the (possibly blinded) display labels used in ``per_img_run.model``.
+    """
+    if not sel_models_disp or per_img_run.empty:
+        return per_img_run
+    excl = st.multiselect(
+        "Exclude models from this tab",
+        options=sel_models_disp,
+        default=[],
+        key=key,
+        help="Per-tab override — does not affect the sidebar selection.",
+    )
+    if not excl:
+        return per_img_run
+    return per_img_run[~per_img_run["model"].isin(excl)].copy()
+
+
+def _render_outlier_thumbnails(df_top: pd.DataFrame) -> None:
+    """Render outlier rows as a grid of thumbnails (4 per row)."""
+    st.markdown("##### Thumbnails")
+    rows = df_top.to_dict("records")
+    for i in range(0, len(rows), 4):
+        chunk = rows[i:i + 4]
+        cols = st.columns(4)
+        for col, r in zip(cols, chunk):
+            with col:
+                try:
+                    p = image_path(r["image_id"])
+                    col.image(str(p), use_container_width=True)
+                except FileNotFoundError:
+                    col.caption("(image missing)")
+                col.caption(
+                    f"**{r['image_id']}** · {r['category']} · {r['dimension']}\n"
+                    f"LLM={r['llm_mean']:.2f} · Human={r['human_value']:.2f} · Δ={r['delta']:+.2f}"
+                )
+
+
+def _render_anova_tab(per_img_run: pd.DataFrame) -> None:
+    try:
+        import statsmodels.api as sm
+        import statsmodels.formula.api as smf
+    except Exception:
+        st.info("Install `statsmodels` to enable the Category × Model ANOVA.")
+        return
+    df_an = per_img_run.copy()
+    df_an["abs_err"] = (df_an["llm_mean"] - df_an["human_value"]).abs()
+    rows = []
+    for dim, sub in df_an.groupby("dimension"):
+        sub = sub.dropna(subset=["abs_err", "category", "model"])
+        if sub["category"].nunique() < 2 or sub["model"].nunique() < 2 or len(sub) < 8:
+            continue
+        try:
+            model = smf.ols("abs_err ~ C(category) + C(model) + C(category):C(model)", data=sub).fit()
+            aov = sm.stats.anova_lm(model, typ=2)
+        except Exception as e:
+            st.warning(f"ANOVA failed for {dim}: {e}")
+            continue
+        ss_total = float(aov["sum_sq"].sum())
+        for fac, r in aov.iterrows():
+            rows.append({
+                "dimension": dim,
+                "factor": fac,
+                "df": float(r["df"]),
+                "ss": float(r["sum_sq"]),
+                "F": float(r["F"]) if "F" in r and not pd.isna(r["F"]) else float("nan"),
+                "p": float(r["PR(>F)"]) if "PR(>F)" in r and not pd.isna(r["PR(>F)"]) else float("nan"),
+                "eta_sq": float(r["sum_sq"]) / ss_total if ss_total > 0 else float("nan"),
+            })
+    if not rows:
+        st.info("Need at least 2 models × 2 categories for the ANOVA.")
+        return
+    df_anova = pd.DataFrame(rows).round(4)
+    st.dataframe(df_anova, use_container_width=True, hide_index=True)
+    _csv_download(df_anova, filename="anova_category_model.csv", key="dl_anova")
+
+
+def _render_power_tab(
+    per_img_run: pd.DataFrame,
+    sel_models_disp: list[str],
+    *,
+    key_prefix: str,
+) -> None:
+    """Sample size & power for the per-image paired t-test against human norms.
+
+    Two sub-views:
+      * **Observed** — for each (model × dimension) combination in scope,
+        report n, observed Cohen's d (paired), achieved power at α=0.05
+        (two-sided), and the n required to hit a target power for that
+        observed effect size.
+      * **A priori** — sliders for d and target power → required n.
+    """
+    st.caption(
+        "Power analysis for the **per-image paired t-test** "
+        "(LLM image-mean vs OASIS human image-mean), two-sided, α=0.05."
+    )
+    try:
+        from statsmodels.stats.power import TTestPower
+    except Exception:
+        st.info("Install `statsmodels` to enable power analysis.")
+        return
+
+    tp = TTestPower()
+    alpha = st.number_input(
+        "α (two-sided)", min_value=0.001, max_value=0.20,
+        value=0.05, step=0.005, key=f"{key_prefix}_alpha",
+    )
+
+    sub_a, sub_b = st.tabs(["Observed", "A priori"])
+
+    # ── Observed ──
+    with sub_a:
+        per_img_p = _exclude_models_widget(
+            per_img_run, sel_models_disp, key=f"{key_prefix}_excl",
+        )
+        target_power = st.slider(
+            "Target power (for required-n column)", 0.5, 0.99, 0.80, 0.01,
+            key=f"{key_prefix}_target",
+        )
+        rows = []
+        for (m, dim), sub in per_img_p.groupby(["model", "dimension"]):
+            d_pairs = (sub.groupby("image_id")
+                          .agg(llm=("llm_mean", "mean"),
+                               human=("human_value", "first"))
+                          .dropna())
+            n = int(d_pairs.shape[0])
+            if n < 3:
+                continue
+            diff = (d_pairs["llm"] - d_pairs["human"]).to_numpy()
+            sd = float(diff.std(ddof=1))
+            d_obs = float(diff.mean() / sd) if sd > 0 else float("nan")
+            try:
+                achieved = float(tp.power(
+                    effect_size=abs(d_obs), nobs=n, alpha=float(alpha)
+                )) if not np.isnan(d_obs) and abs(d_obs) > 0 else float("nan")
+            except Exception:
+                achieved = float("nan")
+            try:
+                req_n = float(tp.solve_power(
+                    effect_size=abs(d_obs), alpha=float(alpha),
+                    power=float(target_power), alternative="two-sided",
+                )) if not np.isnan(d_obs) and abs(d_obs) > 0 else float("nan")
+            except Exception:
+                req_n = float("nan")
+            rows.append({
+                "model": m, "dimension": dim, "n_images": n,
+                "cohens_d": round(d_obs, 3),
+                "achieved_power": round(achieved, 3) if not np.isnan(achieved) else None,
+                f"n_for_power_{target_power:.2f}": (
+                    int(np.ceil(req_n)) if not np.isnan(req_n) else None
+                ),
+            })
+        if not rows:
+            st.info("Not enough data to compute power.")
+        else:
+            df_pow = pd.DataFrame(rows)
+            kc = st.columns(3)
+            kc[0].metric("Rows", len(df_pow))
+            ach_col = "achieved_power"
+            if ach_col in df_pow:
+                med = df_pow[ach_col].dropna().median()
+                kc[1].metric("Median achieved power", f"{med:.2f}" if pd.notna(med) else "n/a")
+                under = int((df_pow[ach_col] < 0.80).sum())
+                kc[2].metric("Underpowered (<0.80)", under)
+            st.dataframe(df_pow, use_container_width=True, hide_index=True)
+            _csv_download(df_pow, filename="power_observed.csv",
+                          key=f"{key_prefix}_dl_obs")
+
+    # ── A priori ──
+    with sub_b:
+        c1, c2 = st.columns(2)
+        d_in = c1.slider("Effect size d (paired)", 0.05, 1.50, 0.30, 0.05,
+                         key=f"{key_prefix}_d")
+        pwr = c2.slider("Target power", 0.50, 0.99, 0.80, 0.01,
+                        key=f"{key_prefix}_pwr")
+        try:
+            n_req = tp.solve_power(
+                effect_size=float(d_in), alpha=float(alpha),
+                power=float(pwr), alternative="two-sided",
+            )
+        except Exception as e:
+            st.error(f"Power calc failed: {e}")
+            return
+        st.metric(
+            "Required n_images",
+            int(np.ceil(n_req)) if n_req and not np.isnan(n_req) else "n/a",
+            help="Number of paired (image, dim) observations needed.",
+        )
+
+        # Curve over a range of d
+        ds = np.arange(0.05, 1.51, 0.05)
+        ns = [
+            tp.solve_power(effect_size=float(d), alpha=float(alpha),
+                           power=float(pwr), alternative="two-sided")
+            for d in ds
+        ]
+        curve = pd.DataFrame({"cohens_d": ds, "n_required": np.ceil(ns).astype(int)})
+        st.line_chart(curve.set_index("cohens_d"))
+        st.caption(f"Curve fixes power={pwr:.2f}, α={float(alpha):.3f}.")
+        _csv_download(curve, filename="power_curve.csv",
+                      key=f"{key_prefix}_dl_curve")
