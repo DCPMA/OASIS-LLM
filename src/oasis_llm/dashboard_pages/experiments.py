@@ -18,6 +18,21 @@ from oasis_llm.dashboard_pages._ui import (
 
 PROVIDERS = ["openrouter", "ollama", "anthropic", "google", "openai"]
 
+# Sampling/generation fields surfaced in the editor. All default to ``None``
+# (= use the model's own default) and round-trip through either RunConfig
+# top-level (``temperature``, ``max_tokens``) or ``extra_params`` (everything
+# else, including ``stop`` which is a list[str]).
+_TOP_LEVEL_SAMPLING = ("temperature", "max_tokens")
+_EXTRA_NUMERIC_SAMPLING = (
+    "top_p", "top_k", "seed",
+    "min_p", "frequency_penalty", "presence_penalty", "repetition_penalty",
+    "repeat_penalty", "repeat_last_n", "num_ctx", "num_predict",
+    "mirostat", "mirostat_eta", "mirostat_tau", "tfs_z", "typical_p",
+)
+_ALL_NUMERIC_SAMPLING = _TOP_LEVEL_SAMPLING + _EXTRA_NUMERIC_SAMPLING
+# ``stop`` lives in extra_params but is a list[str], not numeric.
+_EXTRA_STOP_FIELD = "stop"
+
 
 def _slug_from_model(model: str) -> str:
     """Derive a short slug suitable as a config name from a model id.
@@ -373,9 +388,6 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
     """Convert a stored ``config_json`` row back into the editor's session shape."""
     extra = dict(cj.get("extra_params") or {})
     disable_thinking = bool(extra.get("think") is False) if "think" in extra else True
-    # Sampling params: ``None`` means "use provider/model default" (don't send).
-    top_p_raw = extra.get("top_p")
-    top_k_raw = extra.get("top_k")
     provider = cj.get("provider", "openrouter")
     model = str(cj.get("model", ""))
     # Strip a redundant `openrouter/` prefix — `cfg.provider == "openrouter"`
@@ -388,16 +400,12 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
     # from the model id, default the toggle to ON so editing the model also
     # updates the slug. Otherwise honour the user's custom name.
     auto = (cfg_name == _slug_from_model(model))
-    return {
+
+    out = {
         "config_name": cfg_name,
         "config_name_auto": auto,
         "provider": provider,
         "model": model,
-        # Sampling params: None ⇒ "use model default" (omitted from request).
-        "temperature": (float(cj["temperature"]) if cj.get("temperature") is not None else None),
-        "top_p": (float(top_p_raw) if top_p_raw is not None else None),
-        "top_k": (int(top_k_raw) if top_k_raw is not None else None),
-        "max_tokens": (int(cj["max_tokens"]) if cj.get("max_tokens") is not None else None),
         "samples_per_image": int(cj.get("samples_per_image", 5)),
         "capture_reasoning": bool(cj.get("capture_reasoning", True)),
         "cache_buster": bool(cj.get("cache_buster", True)),
@@ -411,6 +419,40 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
         "request_timeout_s": int(cj.get("request_timeout_s", 60)),
         "disable_thinking": disable_thinking,
     }
+    # Sampling params: ``None`` means "use provider/model default" (don't send).
+    # Top-level RunConfig keys come from cj directly; everything else lives
+    # under ``extra_params``.
+    for field in _TOP_LEVEL_SAMPLING:
+        v = cj.get(field)
+        out[field] = (float(v) if isinstance(v, (int, float)) and field == "temperature"
+                      else int(v) if v is not None and field == "max_tokens"
+                      else None)
+    for field in _EXTRA_NUMERIC_SAMPLING:
+        raw = extra.get(field)
+        if raw is None:
+            out[field] = None
+        else:
+            try:
+                # Use float for params with decimal ranges; int otherwise.
+                if field in {
+                    "top_p", "min_p", "frequency_penalty", "presence_penalty",
+                    "repetition_penalty", "repeat_penalty",
+                    "mirostat_eta", "mirostat_tau", "tfs_z", "typical_p",
+                }:
+                    out[field] = float(raw)
+                else:
+                    out[field] = int(raw)
+            except (TypeError, ValueError):
+                out[field] = None
+    # ``stop`` (list[str] | None)
+    raw_stop = extra.get(_EXTRA_STOP_FIELD)
+    if isinstance(raw_stop, list) and raw_stop:
+        out[_EXTRA_STOP_FIELD] = [str(s) for s in raw_stop]
+    elif isinstance(raw_stop, str) and raw_stop:
+        out[_EXTRA_STOP_FIELD] = [raw_stop]
+    else:
+        out[_EXTRA_STOP_FIELD] = None
+    return out
 
 
 def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
@@ -472,10 +514,9 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                 "config_name_auto": True,
                 "provider": default_provider,
                 "model": default_model,
-                "temperature": None,
-                "top_p": None,
-                "top_k": None,
-                "max_tokens": None,
+                # All sampling params start as None → use model defaults.
+                **{f: None for f in _ALL_NUMERIC_SAMPLING},
+                _EXTRA_STOP_FIELD: None,
                 "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": 4,
@@ -688,16 +729,31 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
             # ``None`` ⇒ use the model's own default (no value sent on the wire).
             # Each row offers an "Override" toggle that flips between
             # default-mode (caption shows the live default if we can fetch one)
-            # and a manual editor.
-            from oasis_llm.providers import fetch_model_defaults
+            # and a manual editor. The set of visible rows is driven by the
+            # provider's supported_parameters list — e.g. OpenRouter's
+            # ``:free`` tier hides top_k, OpenAI hides top_k, Ollama shows
+            # everything.
+            from oasis_llm.providers import (
+                fetch_model_defaults, fetch_model_supported,
+            )
             defaults = fetch_model_defaults(
                 cfg["provider"], cfg["model"],
                 api_base=cfg.get("api_base"),
             ) if cfg.get("model") else {}
+            supported = set(fetch_model_supported(
+                cfg["provider"], cfg["model"],
+                api_base=cfg.get("api_base"),
+            )) if cfg.get("model") else set()
+
             with st.expander("🎛️ Sampling parameters", expanded=False):
                 if defaults:
                     bits = ", ".join(f"`{k}`={v}" for k, v in defaults.items())
                     st.caption(f"Detected model defaults: {bits}")
+                elif cfg["provider"] == "openrouter" and supported:
+                    st.caption(
+                        f"Supported by this model ({len(supported)}): "
+                        + ", ".join(f"`{s}`" for s in sorted(supported))
+                    )
                 elif cfg["provider"] == "ollama":
                     st.caption(
                         "Couldn't reach Ollama at `/api/show` — leave overrides "
@@ -711,18 +767,64 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                     )
 
                 _SAMPLING_HELP = {
-                    "temperature": "Decoding temperature. 0 = greedy/argmax. Higher = more diverse.",
-                    "top_p":       "Nucleus sampling cutoff. 1.0 disables truncation.",
-                    "top_k":       "Top-K sampling cutoff (Ollama-only on most models). 0 disables.",
-                    "max_tokens":  "Cap on generated tokens. Empty = uncapped (let provider/model decide).",
+                    "temperature":        "Decoding temperature. 0 = greedy/argmax. Higher = more diverse.",
+                    "top_p":              "Nucleus sampling cutoff. 1.0 disables truncation.",
+                    "top_k":              "Top-K sampling cutoff. 0 disables (Ollama).",
+                    "max_tokens":         "Cap on generated tokens. Empty = uncapped (provider/model decides).",
+                    "seed":               "Sampling seed. Integer ⇒ reproducible (when supported).",
+                    "min_p":              "Min-P sampling cutoff. 0 disables.",
+                    "frequency_penalty":  "Penalise frequent tokens. Range typically -2…2; 0 = off.",
+                    "presence_penalty":   "Penalise tokens already present. Range typically -2…2; 0 = off.",
+                    "repetition_penalty": "OpenRouter repetition penalty. 1.0 = off; >1 discourages repeats.",
+                    "repeat_penalty":     "Ollama repetition penalty. 1.0 = off; >1 discourages repeats.",
+                    "repeat_last_n":      "Ollama: lookback window for repeat_penalty in tokens. -1 = num_ctx.",
+                    "num_ctx":            "Ollama context window in tokens. Increases VRAM use.",
+                    "num_predict":        "Ollama max tokens to generate. Like max_tokens.",
+                    "mirostat":           "Ollama Mirostat algorithm. 0=off, 1=v1, 2=v2.",
+                    "mirostat_eta":       "Ollama Mirostat learning rate.",
+                    "mirostat_tau":       "Ollama Mirostat target perplexity.",
+                    "tfs_z":              "Ollama tail-free sampling. 1.0 disables.",
+                    "typical_p":          "Ollama locally-typical sampling. 1.0 disables.",
                 }
+                # (lo, hi, step, fmt, caster, fallback)
                 _SAMPLING_RANGES = {
-                    "temperature": (0.0, 2.0, 0.05, "%.2f", float, 0.7),
-                    "top_p":       (0.0, 1.0, 0.05, "%.2f", float, 0.9),
-                    "top_k":       (0,   200, 1,    None,   int,   40),
-                    "max_tokens":  (16,  8192, 16,  None,   int,   1024),
+                    "temperature":        (0.0, 2.0,  0.05, "%.2f", float, 0.7),
+                    "top_p":              (0.0, 1.0,  0.05, "%.2f", float, 0.9),
+                    "top_k":              (0,   200,  1,    None,   int,   40),
+                    "max_tokens":         (16,  8192, 16,   None,   int,   1024),
+                    "seed":               (0,   2**31 - 1, 1, None, int,   42),
+                    "min_p":              (0.0, 1.0,  0.01, "%.2f", float, 0.05),
+                    "frequency_penalty":  (-2.0, 2.0, 0.05, "%.2f", float, 0.0),
+                    "presence_penalty":   (-2.0, 2.0, 0.05, "%.2f", float, 0.0),
+                    "repetition_penalty": (0.5, 2.0,  0.05, "%.2f", float, 1.0),
+                    "repeat_penalty":     (0.5, 2.0,  0.05, "%.2f", float, 1.1),
+                    "repeat_last_n":      (-1,  4096, 1,    None,   int,   64),
+                    "num_ctx":            (512, 32768, 256, None,   int,   4096),
+                    "num_predict":        (-1,  8192, 16,   None,   int,   -1),
+                    "mirostat":           (0,   2,    1,    None,   int,   0),
+                    "mirostat_eta":       (0.0, 1.0,  0.01, "%.2f", float, 0.1),
+                    "mirostat_tau":       (0.0, 10.0, 0.1,  "%.1f", float, 5.0),
+                    "tfs_z":              (0.0, 2.0,  0.05, "%.2f", float, 1.0),
+                    "typical_p":          (0.0, 1.0,  0.01, "%.2f", float, 1.0),
                 }
-                for field in ("temperature", "top_p", "top_k", "max_tokens"):
+                _GROUP_CORE = ("temperature", "top_p", "top_k", "max_tokens", "seed")
+                _GROUP_PENALTY = (
+                    "min_p", "frequency_penalty", "presence_penalty",
+                    "repetition_penalty",
+                )
+                _GROUP_OLLAMA_ADVANCED = (
+                    "repeat_penalty", "repeat_last_n", "num_ctx", "num_predict",
+                    "mirostat", "mirostat_eta", "mirostat_tau", "tfs_z",
+                    "typical_p",
+                )
+
+                def _is_supported(field: str) -> bool:
+                    # Empty supported set ⇒ provider not introspectable, allow all.
+                    if not supported:
+                        return True
+                    return field in supported
+
+                def _render_param(field: str) -> None:
                     lo, hi, step, fmt, caster, fallback = _SAMPLING_RANGES[field]
                     cur = cfg.get(field)
                     use_default = cur is None
@@ -740,19 +842,56 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                             st.caption(f"**{field}** · using default ({shown})")
                             cfg[field] = None
                         else:
-                            seed = (
-                                cur if cur is not None else defaults.get(field, fallback)
-                            )
+                            seed_v = cur if cur is not None else defaults.get(field, fallback)
                             cfg[field] = caster(bounded_number_input(
                                 field,
-                                value=caster(seed),
+                                value=caster(seed_v),
                                 min_value=lo,
                                 max_value=hi,
                                 step=step,
                                 format=fmt,
                                 key=f"cfg_{field}_{i}",
-                                help=_SAMPLING_HELP[field],
+                                help=_SAMPLING_HELP.get(field),
                             ))
+
+                # Core params
+                for field in _GROUP_CORE:
+                    if _is_supported(field):
+                        _render_param(field)
+
+                # Stop sequences (text, not numeric)
+                if (not supported) or "stop" in supported:
+                    cur_stop = cfg.get("stop") or []
+                    cur_text = "\n".join(cur_stop) if isinstance(cur_stop, list) else str(cur_stop or "")
+                    raw = st.text_area(
+                        "stop sequences",
+                        value=cur_text,
+                        height=70,
+                        key=f"cfg_stop_{i}",
+                        help=(
+                            "One sequence per line. Generation halts when any "
+                            "match is produced. Empty = none."
+                        ),
+                    )
+                    seqs = [s for s in (raw.splitlines()) if s.strip()]
+                    cfg["stop"] = seqs or None
+
+                # Penalty params — only render group if at least one is supported
+                penalty_visible = [f for f in _GROUP_PENALTY if _is_supported(f)]
+                if penalty_visible:
+                    st.markdown("---")
+                    st.caption("**Penalties / cutoffs**")
+                    for field in penalty_visible:
+                        _render_param(field)
+
+                # Ollama-only advanced
+                ollama_visible = [
+                    f for f in _GROUP_OLLAMA_ADVANCED if _is_supported(f)
+                ]
+                if cfg["provider"] == "ollama" and ollama_visible:
+                    with st.expander("🦙 Ollama advanced (mirostat, num_ctx, …)"):
+                        for field in ollama_visible:
+                            _render_param(field)
 
             cd2, cd3, cd4 = st.columns(3)
             cfg["samples_per_image"] = cd2.number_input(
@@ -888,10 +1027,9 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                 "config_name_auto": True,
                 "provider": last["provider"],
                 "model": last["model"],
-                "temperature": last.get("temperature"),
-                "top_p": last.get("top_p"),
-                "top_k": last.get("top_k"),
-                "max_tokens": last.get("max_tokens"),
+                # Carry sampling params from the previous config.
+                **{f: last.get(f) for f in _ALL_NUMERIC_SAMPLING},
+                _EXTRA_STOP_FIELD: last.get(_EXTRA_STOP_FIELD),
                 "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": int(last.get("max_concurrency", 4)),
@@ -942,19 +1080,21 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                     extra.setdefault("think", False)
                 else:
                     c2.pop("disable_thinking", None)
-                # Sampling params: top_p / top_k go through extra_params; temperature
-                # and max_tokens are top-level RunConfig fields. ``None`` means
-                # "let the provider apply its own default" (omit on the wire).
-                top_p = c2.pop("top_p", None)
-                top_k = c2.pop("top_k", None)
-                if top_p is not None:
-                    extra["top_p"] = float(top_p)
+                # Sampling params: top-level RunConfig fields stay on c2;
+                # everything else flows through extra_params. ``None`` means
+                # "omit on the wire so the provider applies its default".
+                for field in _EXTRA_NUMERIC_SAMPLING:
+                    val = c2.pop(field, None)
+                    if val is not None:
+                        extra[field] = val
+                    else:
+                        extra.pop(field, None)
+                # ``stop`` is a list[str].
+                stop_val = c2.pop(_EXTRA_STOP_FIELD, None)
+                if stop_val:
+                    extra[_EXTRA_STOP_FIELD] = list(stop_val)
                 else:
-                    extra.pop("top_p", None)
-                if top_k is not None:
-                    extra["top_k"] = int(top_k)
-                else:
-                    extra.pop("top_k", None)
+                    extra.pop(_EXTRA_STOP_FIELD, None)
                 if extra:
                     c2["extra_params"] = extra
                 else:
@@ -962,10 +1102,9 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                 # Drop None temperature / max_tokens entirely so RunConfig
                 # treats them as "don't send" (Pydantic accepts the missing
                 # key as the field default).
-                if c2.get("temperature") is None:
-                    c2.pop("temperature", None)
-                if c2.get("max_tokens") is None:
-                    c2.pop("max_tokens", None)
+                for field in _TOP_LEVEL_SAMPLING:
+                    if c2.get(field) is None:
+                        c2.pop(field, None)
                 cfgs_payload.append(c2)
             if mode == "edit" and edit_exp_id:
                 ex.update_configs(

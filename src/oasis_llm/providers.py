@@ -80,6 +80,30 @@ def litellm_model_id(provider: str, model: str) -> str:
 # doesn't expose recommended defaults — callers should treat that as "let
 # the provider apply whatever it does internally".
 _MODEL_DEFAULTS_CACHE: dict[tuple, dict] = {}
+_MODEL_SUPPORTED_CACHE: dict[tuple, list[str]] = {}
+
+
+# Static fallback for providers / failure cases. Empty list means "allow
+# everything" — the UI shouldn't gate fields when we don't know.
+_PROVIDER_PARAM_FALLBACK: dict[str, list[str]] = {
+    # Hard-coded union of common params; used when the live API call fails.
+    "openrouter": [
+        "max_tokens", "temperature", "top_p", "top_k", "stop", "seed",
+        "frequency_penalty", "presence_penalty", "repetition_penalty",
+        "min_p", "response_format",
+    ],
+    # Ollama supports everything its Modelfile + generate API expose.
+    "ollama": [
+        "temperature", "top_p", "top_k", "max_tokens", "stop", "seed",
+        "min_p", "frequency_penalty", "presence_penalty",
+        "repeat_penalty", "repeat_last_n", "num_ctx", "num_predict",
+        "mirostat", "mirostat_eta", "mirostat_tau", "tfs_z", "typical_p",
+    ],
+    # Other providers — leave empty (allow everything).
+    "anthropic": [],
+    "google": [],
+    "openai": [],
+}
 
 
 def fetch_model_defaults(
@@ -89,17 +113,19 @@ def fetch_model_defaults(
     """Best-effort sampling-parameter defaults for ``(provider, model)``.
 
     Returns a dict possibly containing keys: ``temperature``, ``top_p``,
-    ``top_k``, ``num_ctx``, ``max_tokens``. Any key may be missing.
+    ``top_k``, ``min_p``, ``num_ctx``, ``num_predict``, ``repeat_penalty``,
+    ``repeat_last_n``, ``mirostat``, ``mirostat_eta``, ``mirostat_tau``,
+    ``tfs_z``, ``typical_p``, ``frequency_penalty``, ``presence_penalty``,
+    ``seed``. Any key may be missing.
 
-    * **Ollama**: queries ``/api/show`` and parses the ``parameters`` block.
-      This is the only provider that exposes per-model recommended defaults
-      in a structured form.
-    * **OpenRouter / Anthropic / Google / OpenAI**: return ``{}`` — the
-      provider applies its own internal defaults when params are omitted.
+    * **Ollama**: queries ``/api/show`` and parses the full ``parameters``
+      Modelfile block — every numeric line is surfaced.
+    * **OpenRouter / Anthropic / Google / OpenAI**: return ``{}`` — those
+      providers don't expose recommended-default endpoints. The UI uses
+      generic fallback ranges when no defaults are detected.
 
     The result is cached for the lifetime of the process. Network errors
-    return ``{}`` rather than raising; the caller can fall back to "send
-    nothing → provider default".
+    return ``{}`` rather than raising.
     """
     key = (provider, model, api_base or "")
     cached = _MODEL_DEFAULTS_CACHE.get(key)
@@ -115,6 +141,72 @@ def fetch_model_defaults(
     return out
 
 
+def fetch_model_supported(
+    provider: str, model: str, *, api_base: str | None = None,
+    timeout_s: float = 4.0,
+) -> list[str]:
+    """Return the list of sampling parameter names this model supports.
+
+    * **OpenRouter**: hits ``/api/v1/parameters/{model_slug}`` which returns
+      ``{"data": {"supported_parameters": [...]}}``. ``:free``-tier models
+      typically expose a smaller subset (e.g. no ``top_k``).
+    * **Ollama**: returns the static union of Modelfile params (any model
+      can accept all of them via the generate API).
+    * Others: returns the static fallback list.
+
+    On network failure or missing API key, falls back to the static
+    ``_PROVIDER_PARAM_FALLBACK`` list. Empty list means "no info — let the
+    UI show everything". Result is cached per ``(provider, model, api_base)``.
+    """
+    key = (provider, model, api_base or "")
+    cached = _MODEL_SUPPORTED_CACHE.get(key)
+    if cached is not None:
+        return cached
+    out: list[str] = []
+    try:
+        if provider == "openrouter":
+            out = _fetch_openrouter_supported(model, api_base, timeout_s)
+        elif provider == "ollama":
+            out = list(_PROVIDER_PARAM_FALLBACK["ollama"])
+    except Exception:
+        out = []
+    if not out:
+        out = list(_PROVIDER_PARAM_FALLBACK.get(provider, []))
+    _MODEL_SUPPORTED_CACHE[key] = out
+    return out
+
+
+def _fetch_openrouter_supported(
+    model: str, api_base: str | None, timeout_s: float,
+) -> list[str]:
+    """Query OpenRouter's per-model supported_parameters endpoint.
+
+    Endpoint: ``GET /api/v1/parameters/{model_slug}`` (requires Bearer auth).
+    Returns the model-specific list, e.g. ``:free`` tiers usually drop
+    ``top_k`` and the penalty knobs.
+    """
+    import json as _json
+    import urllib.request
+
+    key = os.getenv("OPENROUTER_API_KEY")
+    if not key:
+        return []
+    base = (api_base or "https://openrouter.ai/api/v1").rstrip("/")
+    slug = model[len("openrouter/"):] if model.startswith("openrouter/") else model
+    req = urllib.request.Request(
+        f"{base}/parameters/{slug}",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as r:
+        body = _json.loads(r.read().decode())
+    data = body.get("data") or {}
+    sup = data.get("supported_parameters") or []
+    return [str(s) for s in sup]
+
+
 def _fetch_ollama_defaults(model: str, api_base: str | None, timeout_s: float) -> dict:
     """Parse Ollama's ``/api/show`` ``parameters`` text block.
 
@@ -127,7 +219,7 @@ def _fetch_ollama_defaults(model: str, api_base: str | None, timeout_s: float) -
         top_p 0.9
         stop "<|eot_id|>"
 
-    We only surface the four sampling parameters we expose in the UI.
+    We surface every numeric parameter; ``stop`` (string) is dropped.
     """
     import json as _json
     import urllib.request
@@ -143,23 +235,27 @@ def _fetch_ollama_defaults(model: str, api_base: str | None, timeout_s: float) -
     with urllib.request.urlopen(req, timeout=timeout_s) as r:
         body = _json.loads(r.read().decode())
     raw = body.get("parameters") or ""
+
+    int_keys = {
+        "top_k", "num_ctx", "num_predict", "num_keep", "repeat_last_n",
+        "mirostat", "seed",
+    }
+    float_keys = {
+        "temperature", "top_p", "min_p", "repeat_penalty", "presence_penalty",
+        "frequency_penalty", "mirostat_eta", "mirostat_tau", "tfs_z",
+        "typical_p",
+    }
     out: dict = {}
     for line in str(raw).splitlines():
         parts = line.strip().split(None, 1)
         if len(parts) != 2:
             continue
         k, v = parts[0], parts[1].strip().strip('"')
-        if k == "temperature":
-            try: out["temperature"] = float(v)
+        if k in int_keys:
+            try: out[k] = int(v)
             except ValueError: pass
-        elif k == "top_p":
-            try: out["top_p"] = float(v)
-            except ValueError: pass
-        elif k == "top_k":
-            try: out["top_k"] = int(v)
-            except ValueError: pass
-        elif k == "num_ctx":
-            try: out["num_ctx"] = int(v)
+        elif k in float_keys:
+            try: out[k] = float(v)
             except ValueError: pass
     return out
 
