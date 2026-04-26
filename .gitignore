@@ -30,3 +30,18 @@ export/
 !data/public/README.md
 
 leaks.json
+
+# Local-only working notes (not for publication)
+/AGENT_START_HERE.md
+/IMPLEMENTATION_PUBLIC_RELEASE.md
+/4qspg-datacite.json
+/OASIS.R
+/PLAN.md
+
+# Ad-hoc analysis outputs (re-published as bundles in data/public/)
+/analysis/
+
+# OASIS reference assets (Kurdi 2017, CC BY-NC-SA 4.0)
+# Users download from https://osf.io/6pnd7/ per README instructions.
+/OASIS/
+/data/raw/

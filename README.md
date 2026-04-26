@@ -4,8 +4,7 @@ A research harness that adapts the **Open Affective Standardized Image Set (OASI
 
 > **Status**: Active research project. Methodology is documented and stable; results pages are added as bundles are published.
 >
-> **Live**: [Documentation](https://github.com/DCPMA/AI-Psy) · [Published results](https://github.com/DCPMA/AI-Psy)
-> _(URLs updated when hosting goes live — see [`IMPLEMENTATION_PUBLIC_RELEASE.md`](IMPLEMENTATION_PUBLIC_RELEASE.md).)_
+> **Live**: [Documentation](https://github.com/DCPMA/OASIS-LLM) · [Published results](https://github.com/DCPMA/OASIS-LLM)
 
 ## What's in here
 
@@ -15,15 +14,15 @@ A research harness that adapts the **Open Affective Standardized Image Set (OASI
 - A pre-launch cost calculator calibrated against n=10,598 historical trials.
 - Research-report-style documentation of every non-trivial discovery this harness has run into (the "Discoveries" section of the docs).
 
-See [PLAN.md](PLAN.md) for the research roadmap and [site/docs/](site/docs/) for the full documentation site (rendered at `<project>.mintlify.app` once hosting is live).
+See [site/docs/](site/docs/) for the full documentation site (rendered at `<project>.mintlify.app` once hosting is live).
 
 ## Quick start
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```bash
-git clone https://github.com/DCPMA/AI-Psy.git
-cd AI-Psy
+git clone https://github.com/DCPMA/OASIS-LLM.git
+cd OASIS-LLM
 cp .env.example .env          # then fill in at least OPENROUTER_API_KEY
 uv sync                       # installs all deps from uv.lock
 
@@ -41,9 +40,14 @@ uv run oasis-llm status
 uv run oasis-llm export <run_id> outputs/<run_id>.csv
 ```
 
-### Image set
+### Image set & human norms
 
-The 900 OASIS images themselves are licensed under **CC BY-NC-SA 4.0** by the original authors and are _not_ redistributable from this repo. Download them from [osf.io/6pnd7](https://osf.io/6pnd7) and unpack into `OASIS/images/` (gitignored).
+The 900 OASIS images and the human-norms CSV are licensed under **CC BY-NC-SA 4.0** by the original authors and are _not_ redistributed from this repository. Before running anything you need to populate two paths:
+
+- **Images** — download from [osf.io/6pnd7](https://osf.io/6pnd7) and unpack into `OASIS/images/*.jpg`.
+- **Human norms** — download `OASIS_data.csv` and `OASIS_codebook.txt` from the same OSF page and place them in `data/raw/`.
+
+Both paths are gitignored. The dashboard and CLI will surface clear errors if either is missing.
 
 ## Repository layout
 
@@ -52,12 +56,13 @@ src/oasis_llm/        # Python package (CLI, runner, dashboard, analyses)
   dashboard_pages/    # 8 Streamlit pages: home, datasets, explorer, …
 configs/runs/         # YAML run configurations
 data/
-  raw/                # OASIS_data.csv + codebook (the human norms)
-  derived/            # OASIS_data_long.csv (denormalised)
+  raw/                # OASIS_data.csv + codebook  (user-populated; gitignored)
+  derived/            # OASIS_data_long.csv         (built locally; gitignored)
   public/             # Committed .zip bundles for the public results viewer
+OASIS/                # Reference images + paper PDFs (user-populated; gitignored)
 scripts/              # Analysis & maintenance scripts
 site/docs/            # Mintlify documentation source
-tests/                # Pytest suite (currently focused on cost estimates)
+tests/                # Pytest suite
 streamlit_app.py      # Streamlit Cloud entrypoint (full desktop dashboard)
 ```
 

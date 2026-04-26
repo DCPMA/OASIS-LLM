@@ -11,8 +11,8 @@ abstract: >-
 authors:
   - family-names: Wong
     given-names: Desmond
-repository-code: "https://github.com/DCPMA/AI-Psy"
-url: "https://github.com/DCPMA/AI-Psy"
+repository-code: "https://github.com/DCPMA/OASIS-LLM"
+url: "https://github.com/DCPMA/OASIS-LLM"
 license: MIT
 version: "0.1.0"
 date-released: 2025-11-22

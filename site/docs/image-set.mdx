@@ -7,6 +7,14 @@ description: "How OASIS images are loaded, how named subsets are stratified, and
 
 OASIS ships 900 open-access color images, standardized to 500 × 400 pixels, in `OASIS/images/*.jpg`. Image IDs are filename stems (e.g. `Beach 1`, `Alarm clock 1`).
 
+<Note>
+  The image set is **not** redistributed from this repository — it is licensed
+  CC BY-NC-SA 4.0 by the original authors. Download from
+  [osf.io/6pnd7](https://osf.io/6pnd7) and unpack into `OASIS/images/` before
+  running. The same OSF page also hosts `OASIS_data.csv` and the codebook, which
+  go in `data/raw/`.
+</Note>
+
 Images are loaded into the LLM call as **base64 data URLs** so that runs are reproducible without network fetches and so that the same prompt works across providers:
 
 ```python
