@@ -59,9 +59,44 @@ class _OpenRouterFreeLimiter:
     def _today() -> date:
         return datetime.now(timezone.utc).date()
 
+    @staticmethod
+    def _ensure_table(con: duckdb.DuckDBPyConnection) -> bool:
+        """Lazy CREATE for older DBs / read-only connections.
+
+        Returns True if the table is available for queries, False otherwise.
+        Read-only connections cannot CREATE — in that case we treat the
+        counter as unavailable (count=0) rather than raising. Writes from
+        :meth:`_bump_daily_count` always go through a read-write connection
+        so the counter is still durable.
+        """
+        try:
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS or_free_daily (
+                    day   DATE PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            return True
+        except Exception:
+            # Read-only connections raise here. Probe instead.
+            try:
+                con.execute("SELECT 1 FROM or_free_daily LIMIT 1")
+                return True
+            except Exception:
+                return False
+
     def _refresh_daily_count(self, con: duckdb.DuckDBPyConnection) -> int:
         today = self._today()
         if self._cached_day != today:
+            if not self._ensure_table(con):
+                # Table not available on this (likely RO) connection — treat
+                # as zero so the UI can still render. The writer side will
+                # create + bump as soon as a real request fires.
+                self._cached_count = 0
+                self._cached_day = today
+                return 0
             row = con.execute(
                 "SELECT count FROM or_free_daily WHERE day = ?", [today]
             ).fetchone()
@@ -71,6 +106,7 @@ class _OpenRouterFreeLimiter:
 
     def _bump_daily_count(self, con: duckdb.DuckDBPyConnection) -> int:
         today = self._today()
+        self._ensure_table(con)
         # Upsert: insert-or-add. DuckDB ON CONFLICT supports DO UPDATE.
         con.execute(
             """
