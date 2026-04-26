@@ -228,6 +228,94 @@ def add_image(con: duckdb.DuckDBPyConnection, dataset_id: str, image_id: str) ->
     )
 
 
+def add_images(
+    con: duckdb.DuckDBPyConnection, dataset_id: str, image_ids: Iterable[str]
+) -> tuple[int, int]:
+    """Bulk-add images to a dataset. Returns ``(added, skipped)``.
+
+    Skips unknown image_ids and ones already present (excluded or not).
+    """
+    _ensure_mutable(con, dataset_id)
+    pool = set(all_image_ids())
+    existing = {
+        r[0] for r in con.execute(
+            "SELECT image_id FROM dataset_images WHERE dataset_id=?", [dataset_id]
+        ).fetchall()
+    }
+    added = 0
+    skipped = 0
+    for iid in image_ids:
+        if iid not in pool or iid in existing:
+            skipped += 1
+            continue
+        con.execute(
+            "INSERT INTO dataset_images (dataset_id, image_id, excluded) "
+            "VALUES (?, ?, FALSE)",
+            [dataset_id, iid],
+        )
+        existing.add(iid)
+        added += 1
+    return added, skipped
+
+
+def shuffle(
+    con: duckdb.DuckDBPyConnection,
+    dataset_id: str,
+    *,
+    seed: int | None = None,
+) -> int:
+    """Re-roll the entire dataset using the stored generation params.
+
+    Replaces all images (including any that were manually added or excluded)
+    with a fresh sample drawn with the same strategy + n. ``seed`` overrides
+    the stored seed; pass ``None`` for a non-deterministic re-shuffle.
+
+    Returns the new image count. Raises if the dataset has no recorded params
+    (e.g. fully manual datasets) or is not mutable.
+    """
+    import random as _r
+
+    _ensure_mutable(con, dataset_id)
+    row = con.execute(
+        "SELECT generation_params FROM datasets WHERE dataset_id=?", [dataset_id]
+    ).fetchone()
+    if row is None or not row[0]:
+        raise ValueError(
+            f"dataset {dataset_id} has no recorded generation params; "
+            "cannot shuffle. Re-add images manually instead."
+        )
+    params = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    strategy = params.get("strategy")
+    n = params.get("n")
+    use_seed = seed if seed is not None else _r.randint(0, 2**31 - 1)
+    if strategy == "all":
+        ids = all_image_ids()
+    elif strategy == "stratified":
+        ids = _stratified_sample(int(n), seed=use_seed)
+    elif strategy == "uniform":
+        ids = _uniform_sample(int(n), seed=use_seed)
+    elif strategy == "random":
+        rng = _r.Random(use_seed)
+        pool = all_image_ids()
+        ids = sorted(rng.sample(pool, min(int(n), len(pool))))
+    else:
+        raise ValueError(f"unknown strategy in stored params: {strategy!r}")
+    con.execute("DELETE FROM dataset_images WHERE dataset_id=?", [dataset_id])
+    con.executemany(
+        "INSERT INTO dataset_images (dataset_id, image_id) VALUES (?, ?)",
+        [(dataset_id, iid) for iid in ids],
+    )
+    # Update stored params so the new seed is recorded for reproducibility.
+    new_params = dict(params)
+    new_params["seed"] = use_seed
+    new_params["shuffled_at"] = datetime.utcnow().isoformat()
+    con.execute(
+        "UPDATE datasets SET generation_params=? WHERE dataset_id=?",
+        [json.dumps(new_params), dataset_id],
+    )
+    return len(ids)
+
+
 def remove_image(con: duckdb.DuckDBPyConnection, dataset_id: str, image_id: str) -> None:
     _ensure_mutable(con, dataset_id)
     con.execute(
