@@ -11,8 +11,8 @@ from oasis_llm import datasets as ds
 from oasis_llm import experiments as ex
 from oasis_llm.config import RunConfig
 from oasis_llm.dashboard_pages._ui import (
-    connect_ro, connect_rw, db_locked_warning, kpi, page_header, star_button,
-    starred_filter_toggle, status_pill,
+    bounded_number_input, connect_ro, connect_rw, db_locked_warning, kpi,
+    page_header, star_button, starred_filter_toggle, status_pill,
 )
 
 
@@ -218,7 +218,7 @@ def _probe_ollama_model(model: str, *, disable_thinking: bool = True) -> dict:
     return _probe_model({
         "provider": "ollama", "model": model,
         "disable_thinking": disable_thinking,
-        "samples_per_image": 1, "temperature": 0.0,
+        "samples_per_image": 1, "temperature": None,
         "capture_reasoning": True, "cache_buster": False,
         "max_concurrency": 1, "request_timeout_s": 60,
     })
@@ -373,6 +373,9 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
     """Convert a stored ``config_json`` row back into the editor's session shape."""
     extra = dict(cj.get("extra_params") or {})
     disable_thinking = bool(extra.get("think") is False) if "think" in extra else True
+    # Sampling params: ``None`` means "use provider/model default" (don't send).
+    top_p_raw = extra.get("top_p")
+    top_k_raw = extra.get("top_k")
     provider = cj.get("provider", "openrouter")
     model = str(cj.get("model", ""))
     # Strip a redundant `openrouter/` prefix — `cfg.provider == "openrouter"`
@@ -390,7 +393,11 @@ def _config_json_to_form_dict(cfg_name: str, cj: dict) -> dict:
         "config_name_auto": auto,
         "provider": provider,
         "model": model,
-        "temperature": float(cj.get("temperature") or 0.0),
+        # Sampling params: None ⇒ "use model default" (omitted from request).
+        "temperature": (float(cj["temperature"]) if cj.get("temperature") is not None else None),
+        "top_p": (float(top_p_raw) if top_p_raw is not None else None),
+        "top_k": (int(top_k_raw) if top_k_raw is not None else None),
+        "max_tokens": (int(cj["max_tokens"]) if cj.get("max_tokens") is not None else None),
         "samples_per_image": int(cj.get("samples_per_image", 5)),
         "capture_reasoning": bool(cj.get("capture_reasoning", True)),
         "cache_buster": bool(cj.get("cache_buster", True)),
@@ -465,7 +472,11 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                 "config_name_auto": True,
                 "provider": default_provider,
                 "model": default_model,
-                "temperature": 0.0, "samples_per_image": 5,
+                "temperature": None,
+                "top_p": None,
+                "top_k": None,
+                "max_tokens": None,
+                "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": 4,
                 "max_retries": 3,
@@ -673,11 +684,77 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                         key=f"cfgname_text_{i}",
                     )
 
-            cd1, cd2, cd3, cd4 = st.columns(4)
-            cfg["temperature"] = cd1.number_input(
-                "Temperature", min_value=0.0, max_value=2.0, value=float(cfg["temperature"]),
-                step=0.1, key=f"cfgtemp_{i}",
-            )
+            # ── sampling parameters ───────────────────────────────────────
+            # ``None`` ⇒ use the model's own default (no value sent on the wire).
+            # Each row offers an "Override" toggle that flips between
+            # default-mode (caption shows the live default if we can fetch one)
+            # and a manual editor.
+            from oasis_llm.providers import fetch_model_defaults
+            defaults = fetch_model_defaults(
+                cfg["provider"], cfg["model"],
+                api_base=cfg.get("api_base"),
+            ) if cfg.get("model") else {}
+            with st.expander("🎛️ Sampling parameters", expanded=False):
+                if defaults:
+                    bits = ", ".join(f"`{k}`={v}" for k, v in defaults.items())
+                    st.caption(f"Detected model defaults: {bits}")
+                elif cfg["provider"] == "ollama":
+                    st.caption(
+                        "Couldn't reach Ollama at `/api/show` — leave overrides "
+                        "off to let Ollama apply its own defaults."
+                    )
+                else:
+                    st.caption(
+                        "This provider doesn't expose recommended defaults. "
+                        "Leaving an override off omits the parameter so the "
+                        "provider applies its internal default."
+                    )
+
+                _SAMPLING_HELP = {
+                    "temperature": "Decoding temperature. 0 = greedy/argmax. Higher = more diverse.",
+                    "top_p":       "Nucleus sampling cutoff. 1.0 disables truncation.",
+                    "top_k":       "Top-K sampling cutoff (Ollama-only on most models). 0 disables.",
+                    "max_tokens":  "Cap on generated tokens. Empty = uncapped (let provider/model decide).",
+                }
+                _SAMPLING_RANGES = {
+                    "temperature": (0.0, 2.0, 0.05, "%.2f", float, 0.7),
+                    "top_p":       (0.0, 1.0, 0.05, "%.2f", float, 0.9),
+                    "top_k":       (0,   200, 1,    None,   int,   40),
+                    "max_tokens":  (16,  8192, 16,  None,   int,   1024),
+                }
+                for field in ("temperature", "top_p", "top_k", "max_tokens"):
+                    lo, hi, step, fmt, caster, fallback = _SAMPLING_RANGES[field]
+                    cur = cfg.get(field)
+                    use_default = cur is None
+                    rowc = st.columns([1, 4])
+                    with rowc[0]:
+                        override = st.toggle(
+                            "Override",
+                            value=not use_default,
+                            key=f"cfg_use_override_{field}_{i}",
+                            help=f"Off = use model default for {field}. On = send the value below.",
+                        )
+                    with rowc[1]:
+                        if not override:
+                            shown = defaults.get(field, "—")
+                            st.caption(f"**{field}** · using default ({shown})")
+                            cfg[field] = None
+                        else:
+                            seed = (
+                                cur if cur is not None else defaults.get(field, fallback)
+                            )
+                            cfg[field] = caster(bounded_number_input(
+                                field,
+                                value=caster(seed),
+                                min_value=lo,
+                                max_value=hi,
+                                step=step,
+                                format=fmt,
+                                key=f"cfg_{field}_{i}",
+                                help=_SAMPLING_HELP[field],
+                            ))
+
+            cd2, cd3, cd4 = st.columns(3)
             cfg["samples_per_image"] = cd2.number_input(
                 "Samples per image", min_value=1, max_value=50,
                 value=int(cfg["samples_per_image"]), key=f"cfgsamp_{i}",
@@ -700,17 +777,18 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                         "comes back empty after a long latency."
                     ),
                 )
-            cfg["max_concurrency"] = st.slider(
+            cfg["max_concurrency"] = bounded_number_input(
                 "Max concurrency",
                 min_value=1, max_value=32,
                 value=int(cfg.get("max_concurrency", 4)),
                 key=f"cfgconc_{i}",
                 help=(
                     "Per-config concurrent in-flight requests. The global "
-                    "`OASIS_MAX_CONCURRENCY` env var can cap this at runtime."
+                    "`OASIS_MAX_CONCURRENCY` env var can cap this at runtime. "
+                    "Toggle ✏️ to set a value above the recommended 32 cap."
                 ),
             )
-            cfg["max_retries"] = st.slider(
+            cfg["max_retries"] = bounded_number_input(
                 "Max retries per trial",
                 min_value=0, max_value=10,
                 value=int(cfg.get("max_retries", 3)),
@@ -739,7 +817,7 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                     key=f"cfgretrycoef_{i}",
                     help="Multiplier applied each retry. 2.0 = exponential (1, 2, 4, 8s).",
                 )
-            cfg["ollama_evict_threshold"] = st.slider(
+            cfg["ollama_evict_threshold"] = bounded_number_input(
                 "Ollama evict-on-stall threshold",
                 min_value=0, max_value=10,
                 value=int(cfg.get("ollama_evict_threshold", 3)),
@@ -781,7 +859,7 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                         "from cancelling the whole config."
                     ),
                 )
-            cfg["request_timeout_s"] = st.slider(
+            cfg["request_timeout_s"] = bounded_number_input(
                 "Request timeout (s)",
                 min_value=10, max_value=600,
                 value=int(cfg.get("request_timeout_s", 60)),
@@ -791,7 +869,8 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                     "Per-call timeout. Increase for large local models that "
                     "queue inside Ollama under concurrency (e.g. 27B/40B+ on "
                     "Apple Silicon often need 120-300s). Failed calls take the "
-                    "FULL timeout × (max_retries+1) before giving up."
+                    "FULL timeout × (max_retries+1) before giving up. Toggle ✏️ "
+                    "for timeouts beyond 600s."
                 ),
             )
 
@@ -809,7 +888,11 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
                 "config_name_auto": True,
                 "provider": last["provider"],
                 "model": last["model"],
-                "temperature": 0.0, "samples_per_image": 5,
+                "temperature": last.get("temperature"),
+                "top_p": last.get("top_p"),
+                "top_k": last.get("top_k"),
+                "max_tokens": last.get("max_tokens"),
+                "samples_per_image": 5,
                 "capture_reasoning": True, "cache_buster": True,
                 "max_concurrency": int(last.get("max_concurrency", 4)),
                 "max_retries": int(last.get("max_retries", 3)),
@@ -854,12 +937,35 @@ def _create_form(edit_exp_id: str | None = None, mode: str = "create"):
             for c in st.session_state["exp_configs"]:
                 c2 = {k: v for k, v in c.items() if not k.startswith("_")}
                 # Translate UI flag → litellm extra_params for Ollama.
+                extra = dict(c2.get("extra_params") or {})
                 if c2.get("provider") == "ollama" and c2.pop("disable_thinking", True):
-                    extra = dict(c2.get("extra_params") or {})
                     extra.setdefault("think", False)
-                    c2["extra_params"] = extra
                 else:
                     c2.pop("disable_thinking", None)
+                # Sampling params: top_p / top_k go through extra_params; temperature
+                # and max_tokens are top-level RunConfig fields. ``None`` means
+                # "let the provider apply its own default" (omit on the wire).
+                top_p = c2.pop("top_p", None)
+                top_k = c2.pop("top_k", None)
+                if top_p is not None:
+                    extra["top_p"] = float(top_p)
+                else:
+                    extra.pop("top_p", None)
+                if top_k is not None:
+                    extra["top_k"] = int(top_k)
+                else:
+                    extra.pop("top_k", None)
+                if extra:
+                    c2["extra_params"] = extra
+                else:
+                    c2.pop("extra_params", None)
+                # Drop None temperature / max_tokens entirely so RunConfig
+                # treats them as "don't send" (Pydantic accepts the missing
+                # key as the field default).
+                if c2.get("temperature") is None:
+                    c2.pop("temperature", None)
+                if c2.get("max_tokens") is None:
+                    c2.pop("max_tokens", None)
                 cfgs_payload.append(c2)
             if mode == "edit" and edit_exp_id:
                 ex.update_configs(
@@ -1079,7 +1185,7 @@ def _render_detail(exp_id: str):
         table_rows.append({
             "Config": p["config_name"],
             "Model": cfg.get("model", "—"),
-            "Temp": cfg.get("temperature", "—"),
+            "Temp": cfg.get("temperature") if cfg.get("temperature") is not None else "default",
             "Samples": cfg.get("samples_per_image", "—"),
             "Done": f"{p['done']}/{p['total']}",
             "Failed": p["failed"],

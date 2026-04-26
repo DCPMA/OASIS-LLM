@@ -214,6 +214,89 @@ def starred_filter_toggle(entity_type: str, *, key: str | None = None) -> bool:
     )
 
 
+def bounded_number_input(
+    label: str,
+    *,
+    value,
+    min_value,
+    max_value,
+    step=None,
+    key: str,
+    help: str | None = None,
+    format: str | None = None,
+    use_slider: bool = True,
+):
+    """Slider with an "✏️ Manual entry" escape hatch for out-of-range values.
+
+    The label-side widget is a ``st.slider`` (or ``st.number_input`` when
+    ``use_slider=False`` or the existing ``value`` is already outside the
+    ``[min_value, max_value]`` band). A small toggle next to the label
+    lets the user switch to a free ``number_input`` with no upper bound,
+    so they can dial a value beyond the slider's recommended range when
+    needed.
+
+    Returns the chosen numeric value, type-matched to ``min_value``.
+    """
+    is_int = isinstance(min_value, int) and isinstance(max_value, int) and not isinstance(value, float)
+    out_of_band = (value is not None) and (value < min_value or value > max_value)
+
+    manual_key = f"{key}__manual"
+    # Sticky default: stay in manual mode once the user opts in OR if the
+    # incoming value is already out of band.
+    if manual_key not in st.session_state:
+        st.session_state[manual_key] = bool(out_of_band)
+
+    head = st.columns([5, 1])
+    with head[1]:
+        st.session_state[manual_key] = st.toggle(
+            "✏️",
+            value=st.session_state[manual_key],
+            key=f"{key}__manual_toggle",
+            help="Type a value manually (allows beyond-recommended-range).",
+        )
+    with head[0]:
+        if st.session_state[manual_key] or out_of_band:
+            kwargs = dict(
+                label=label,
+                value=value,
+                key=key,
+                help=help,
+            )
+            if step is not None:
+                kwargs["step"] = step
+            if format is not None:
+                kwargs["format"] = format
+            # No min/max bounds — that's the whole point of manual mode.
+            return st.number_input(**kwargs)
+        else:
+            if use_slider:
+                kwargs = dict(
+                    label=label,
+                    min_value=min_value,
+                    max_value=max_value,
+                    value=value if value is not None else min_value,
+                    key=key,
+                    help=help,
+                )
+                if step is not None:
+                    kwargs["step"] = step
+                return st.slider(**kwargs)
+            else:
+                kwargs = dict(
+                    label=label,
+                    min_value=min_value,
+                    max_value=max_value,
+                    value=value if value is not None else min_value,
+                    key=key,
+                    help=help,
+                )
+                if step is not None:
+                    kwargs["step"] = step
+                if format is not None:
+                    kwargs["format"] = format
+                return st.number_input(**kwargs)
+
+
 def get_con():
     """Single shared DuckDB connection for the Streamlit session, cached.
 

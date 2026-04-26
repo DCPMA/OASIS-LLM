@@ -73,3 +73,93 @@ def litellm_model_id(provider: str, model: str) -> str:
     if provider == "openai":
         return model
     return model
+
+
+# ─── model-default discovery ─────────────────────────────────────────────────
+# Cached per (provider, model, api_base). Returns ``{}`` when the provider
+# doesn't expose recommended defaults — callers should treat that as "let
+# the provider apply whatever it does internally".
+_MODEL_DEFAULTS_CACHE: dict[tuple, dict] = {}
+
+
+def fetch_model_defaults(
+    provider: str, model: str, *, api_base: str | None = None,
+    timeout_s: float = 4.0,
+) -> dict:
+    """Best-effort sampling-parameter defaults for ``(provider, model)``.
+
+    Returns a dict possibly containing keys: ``temperature``, ``top_p``,
+    ``top_k``, ``num_ctx``, ``max_tokens``. Any key may be missing.
+
+    * **Ollama**: queries ``/api/show`` and parses the ``parameters`` block.
+      This is the only provider that exposes per-model recommended defaults
+      in a structured form.
+    * **OpenRouter / Anthropic / Google / OpenAI**: return ``{}`` — the
+      provider applies its own internal defaults when params are omitted.
+
+    The result is cached for the lifetime of the process. Network errors
+    return ``{}`` rather than raising; the caller can fall back to "send
+    nothing → provider default".
+    """
+    key = (provider, model, api_base or "")
+    cached = _MODEL_DEFAULTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    out: dict = {}
+    try:
+        if provider == "ollama":
+            out = _fetch_ollama_defaults(model, api_base, timeout_s)
+    except Exception:
+        out = {}
+    _MODEL_DEFAULTS_CACHE[key] = out
+    return out
+
+
+def _fetch_ollama_defaults(model: str, api_base: str | None, timeout_s: float) -> dict:
+    """Parse Ollama's ``/api/show`` ``parameters`` text block.
+
+    Ollama returns the ``Modelfile`` parameters as a newline-delimited string
+    like::
+
+        num_ctx 4096
+        temperature 0.7
+        top_k 40
+        top_p 0.9
+        stop "<|eot_id|>"
+
+    We only surface the four sampling parameters we expose in the UI.
+    """
+    import json as _json
+    import urllib.request
+
+    base = (api_base or os.getenv("OLLAMA_API_BASE") or "http://localhost:11434").rstrip("/")
+    bare = model.split("/", 1)[-1] if model.startswith(("ollama_chat/", "ollama/")) else model
+    req = urllib.request.Request(
+        f"{base}/api/show",
+        data=_json.dumps({"name": bare}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as r:
+        body = _json.loads(r.read().decode())
+    raw = body.get("parameters") or ""
+    out: dict = {}
+    for line in str(raw).splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        k, v = parts[0], parts[1].strip().strip('"')
+        if k == "temperature":
+            try: out["temperature"] = float(v)
+            except ValueError: pass
+        elif k == "top_p":
+            try: out["top_p"] = float(v)
+            except ValueError: pass
+        elif k == "top_k":
+            try: out["top_k"] = int(v)
+            except ValueError: pass
+        elif k == "num_ctx":
+            try: out["num_ctx"] = int(v)
+            except ValueError: pass
+    return out
+
