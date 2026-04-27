@@ -38,7 +38,7 @@ leaks.json
 /OASIS.R
 /PLAN.md
 
-# Ad-hoc analysis outputs (re-published as bundles in data/public/)
+# Ad-hoc analysis outputs (untracked; published runs live under /results/)
 /analysis/
 
 # OASIS reference assets (Kurdi 2017, CC BY-NC-SA 4.0)

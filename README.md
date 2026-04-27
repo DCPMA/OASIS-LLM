@@ -4,7 +4,13 @@ A research harness that adapts the **Open Affective Standardized Image Set (OASI
 
 > **Status**: Active research project. Methodology is documented and stable; results pages are added as bundles are published.
 >
-> **Live**: [Documentation](https://github.com/DCPMA/OASIS-LLM) · [Published results](https://github.com/DCPMA/OASIS-LLM)
+> **Live**: [Documentation](https://dcpma.mintlify.app) · [Published results](results/)
+
+## Current results
+
+The first published pilot result is in [`results/llm_vs_human_uniform40/`](results/llm_vs_human_uniform40/) — 5 frontier vision-language models, 40 OASIS images, 20 samples per (image, model) pair, 7,960 trials total. Headline: LLMs track human valence ratings tightly (Pearson *r* ≈ 0.95) but systematically over-rate arousal (+0.36 on a 1–7 scale).
+
+Further runs land in [`results/`](results/) as separate dated directories. Once the dedicated result renderer ships in the docs site, the canonical surface will move there; the Markdown copies in this folder remain as raw-evidence mirrors.
 
 ## What's in here
 
@@ -14,7 +20,7 @@ A research harness that adapts the **Open Affective Standardized Image Set (OASI
 - A pre-launch cost calculator calibrated against n=10,598 historical trials.
 - Research-report-style documentation of every non-trivial discovery this harness has run into (the "Discoveries" section of the docs).
 
-See [site/docs/](site/docs/) for the full documentation site (rendered at `<project>.mintlify.app` once hosting is live).
+See [site/docs/](site/docs/) for the documentation source (rendered live at [dcpma.mintlify.app](https://dcpma.mintlify.app)).
 
 ## Quick start
 
