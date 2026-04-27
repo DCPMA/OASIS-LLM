@@ -19,11 +19,17 @@ adopted by most psychology and life-science journals.
 
 ### Wong ([@DCPMA](https://github.com/DCPMA))
 
-- **CRediT roles**: Software · Data curation · Methodology · Formal analysis ·
-  Visualization · Writing — review & editing · Project administration
-- **Notes**: Built and maintains the harness (LLM rating pipeline, DuckDB
-  store, Streamlit dashboard, CI), runs the experiments, builds the analysis
-  scripts and plots, and wrote the documentation site.
+- **GitHub**: [@DCPMA](https://github.com/DCPMA)
+- **Role on this project**: Agentic systems architect and LLM systems
+  specialist. Designed and built the end-to-end experiment harness, including
+  model orchestration, multi-model prompting and execution flows, async rating
+  pipelines, DuckDB-backed trial logging, dashboarding, CI/CD, and workflow
+  automation. Owns the systems side of experiment reliability, observability,
+  and scalable run operations.
+- **CRediT roles**: Software · Methodology · Data curation · Formal analysis ·
+  Visualization · Project administration · Writing — review & editing
+- **Notes**: Focuses on agentic AI systems, LLM orchestration, evaluation
+  harnesses, and end-to-end automation for research workflows.
 
 ## How to be added
 
