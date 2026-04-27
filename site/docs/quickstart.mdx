@@ -1,11 +1,43 @@
 ---
 title: "Quickstart"
-description: "Install and open the dashboard."
+description: "Install, configure an API key, and either explore the bundled results or run your own 100-trial pilot."
 ---
 
+## 1. Install
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
 ```bash
+git clone https://github.com/DCPMA/OASIS-LLM.git
+cd OASIS-LLM
+cp .env.example .env          # then fill in at least OPENROUTER_API_KEY
 uv sync
+```
+
+## 2. Open the dashboard
+
+```bash
 uv run oasis-llm dashboard
 ```
 
-That is enough to install the project and open the Streamlit dashboard with the bundled data.
+This launches the 8-page Streamlit dashboard at [http://localhost:8501](http://localhost:8501). With the bundled `data/llm_runs.duckdb` you can immediately:
+
+- Browse the OASIS image set on the **Datasets** page.
+- Inspect completed runs and per-trial output on **Runs** and **Trials**.
+- Reproduce the published [LLM vs Human pilot](https://github.com/DCPMA/OASIS-LLM/tree/main/results/llm_vs_human_uniform40) figures interactively from **Analysis**.
+
+## 3. Run a 100-trial pilot
+
+A minimal smoke run against `google/gemma-4-31b-it` on OpenRouter (10 images × 2 dimensions × 5 samples = 100 trials, ~$0.01):
+
+```bash
+uv run oasis-llm run --config configs/runs/pilot-gemma4-31b.yaml
+```
+
+Once it completes, the same Analysis page surfaces it next to the published runs.
+
+## Next
+
+- [Experiment design](/experiment-design) — what the rating procedure replicates verbatim and where it diverges.
+- [Configuration](/configuration) — every `RunConfig` field.
+- [Cost & latency](/cost-latency) — real numbers and full-set extrapolations.

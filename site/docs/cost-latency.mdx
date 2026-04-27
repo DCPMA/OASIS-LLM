@@ -1,9 +1,13 @@
 ---
 title: "Cost & latency"
-description: "Real numbers from the Gemma-4-31B pilot, full-set extrapolations, and how cost is captured."
+description: "Real numbers from the Gemma-4-31B pilot and the 5-model uniform40 result; full-set extrapolations and how cost is captured."
 ---
 
-## Pilot numbers
+## Latest result: 5-model uniform40
+
+The published pilot run ([results/llm_vs_human_uniform40](https://github.com/DCPMA/OASIS-LLM/tree/main/results/llm_vs_human_uniform40)) totals **7,960 completed trials** across 5 frontier vision-language models (40 images × 20 samples × 2 dimensions, minus 1 image dropped by Qwen's safety guardrail). Per-trial cost, latency, input/output tokens, and prompt hashes for every trial are checked into [`raw/trials.csv`](https://github.com/DCPMA/OASIS-LLM/blob/main/results/llm_vs_human_uniform40/raw/trials.csv) under the columns `cost_usd`, `latency_ms`, `input_tokens`, `output_tokens`. Frontier-closed models (Claude Sonnet 4.6, GPT-5.4, Grok 4.20) dominate the cost; Gemma 4 31B-IT and Qwen 3.6 Plus are roughly two orders of magnitude cheaper per trial.
+
+## Pilot numbers (Gemma-4-31B smoke)
 
 The shipped pilot config is 10 images × 2 dimensions × 5 samples = **100 trials** through `google/gemma-4-31b-it` on OpenRouter, vision modality, `capture_reasoning: true`, `cache_buster: true`.
 

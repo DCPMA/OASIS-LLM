@@ -11,8 +11,12 @@
   "navbar": {
     "links": [
       {
-        "label": "Live dashboard",
-        "href": "https://explorer.oasis-llm.org"
+        "label": "Repository",
+        "href": "https://github.com/DCPMA/OASIS-LLM"
+      },
+      {
+        "label": "Latest result",
+        "href": "https://github.com/DCPMA/OASIS-LLM/tree/main/results/llm_vs_human_uniform40"
       }
     ]
   },

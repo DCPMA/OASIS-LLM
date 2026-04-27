@@ -8,6 +8,11 @@ OASIS-LLM is a small experimental harness that takes the **Open Affective Standa
 The goal is **methodological**: figure out what it takes to get behaviorally meaningful ratings out of an LLM (prompt fidelity, sampling variance, cost, reasoning capture) and how those ratings compare to the human norms.
 
 <CardGroup cols={2}>
+  <Card title="Latest result" icon="chart-line" href="https://github.com/DCPMA/OASIS-LLM/tree/main/results/llm_vs_human_uniform40">
+    First published pilot — 5 frontier VLMs × 40 OASIS images × 20 samples
+    (n = 7,960). Valence tracks human norms tightly (*r* ≈ 0.95); arousal
+    is over-rated by ~+0.36 on the 7-point scale.
+  </Card>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
     Run a 100-trial pilot end-to-end in a few minutes.
   </Card>
@@ -25,7 +30,7 @@ The goal is **methodological**: figure out what it takes to get behaviorally mea
     How this replication diverges from Kurdi et al. (2017) and why.
   </Card>
   <Card title="Cost & latency" icon="dollar-sign" href="/cost-latency">
-    Real numbers from the Gemma-4-31B pilot and full-set extrapolations.
+    Real numbers from the Gemma-4-31B smoke and the 5-model uniform40 result.
   </Card>
   <Card title="Reasoning capture" icon="brain" href="/reasoning-capture">
     Why required-schema reasoning broke Gemma 4, and the prompt-rewrite fix.

@@ -6,7 +6,7 @@ icon: "rocket"
 
 The Streamlit dashboard ships as a single ASGI/Tornado app and can be
 deployed read-only so collaborators can interact with the
-[LLM vs Human Explorer](/llm-vs-human-explorer) without local setup.
+[LLM vs Human analytics](/analysis-vs-human) without local setup.
 
 ## Recommended setups
 
@@ -63,8 +63,7 @@ CMD ["streamlit", "run", "src/oasis_llm/dashboard.py", "--server.address=0.0.0.0
 
 ## Linking from the docs
 
-The navbar link in `site/docs/docs.json` is wired to
-`https://explorer.oasis-llm.org` by default — change it to your hosted URL.
+The navbar link in `site/docs/docs.json` should be wired to your hosted URL once a deployment exists. Until then, leave it pointing at the GitHub repo so visitors land somewhere real.
 
 ## Auth options
 
