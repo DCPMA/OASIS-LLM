@@ -8,9 +8,9 @@ A research harness that adapts the **Open Affective Standardized Image Set (OASI
 
 ## Current results
 
-The first published pilot result is in [`results/llm_vs_human_uniform40/`](results/llm_vs_human_uniform40/) — 5 frontier vision-language models, 40 OASIS images, 20 samples per (image, model) pair, 7,960 trials total. Headline: LLMs track human valence ratings tightly (Pearson *r* ≈ 0.95) but systematically over-rate arousal (+0.36 on a 1–7 scale).
+The first published pilot result is in [`results/llm_vs_human_uniform40/`](results/llm_vs_human_uniform40/) — 5 frontier vision-language models, 40 OASIS images, 20 samples per (image, model) pair, 7,960 trials total. Headline: LLMs track human valence ratings tightly (Pearson _r_ ≈ 0.95) but systematically over-rate arousal (+0.36 on a 1–7 scale).
 
-Further runs land in [`results/`](results/) as separate dated directories. Once the dedicated result renderer ships in the docs site, the canonical surface will move there; the Markdown copies in this folder remain as raw-evidence mirrors.
+Further runs land in [`results/`](results/) as separate dated directories.
 
 ## What's in here
 
@@ -19,8 +19,6 @@ Further runs land in [`results/`](results/) as separate dated directories. Once 
 - A bundle import/export system for sharing experiment results reproducibly.
 - A pre-launch cost calculator calibrated against n=10,598 historical trials.
 - Research-report-style documentation of every non-trivial discovery this harness has run into (the "Discoveries" section of the docs).
-
-See [site/docs/](site/docs/) for the documentation source (rendered live at [dcpma.mintlify.app](https://dcpma.mintlify.app)).
 
 ## Quick start
 
@@ -70,16 +68,6 @@ scripts/              # Analysis & maintenance scripts
 site/docs/            # Mintlify documentation source
 tests/                # Pytest suite
 streamlit_app.py      # Streamlit Cloud entrypoint (full desktop dashboard)
-```
-
-## Documentation
-
-The docs site is published from [site/docs/](site/docs/). Local preview:
-
-```bash
-npm i -g mint                 # one-time, requires Node ≥ 20.17
-cd site/docs
-mint dev                      # http://localhost:3000
 ```
 
 ## Citation
