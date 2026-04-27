@@ -1,0 +1,6 @@
+model_friendly,provider,model_id,run_id,modality,samples_per_image,temperature,request_timeout_s,max_retries,status,started_at,finished_at
+claude-sonnet-4.6,openrouter,anthropic/claude-sonnet-4.6,20260426-6da8__claude-sonnet-4-6,vision,20,,60,3,done,2026-04-26 17:46:53.205102,2026-04-26 18:09:33.562813
+gemma-4-31b-it,openrouter,google/gemma-4-31b-it,20260426-3bde__gemma-4-31b-it,vision,20,,60,3,done,2026-04-26 18:20:08.362081,2026-04-26 18:28:38.334398
+gpt-5.4,openrouter,openai/gpt-5.4,20260426-a5e3__gpt-5-4,vision,20,,60,3,done,2026-04-26 18:10:44.975046,2026-04-26 18:22:19.847486
+qwen3.6-plus,openrouter,qwen/qwen3.6-plus,20260426-9d70__qwen3-6-plus,vision,20,,60,3,done,2026-04-26 18:12:37.178295,2026-04-26 18:33:42.527479
+grok-4.20,openrouter,x-ai/grok-4.20,20260426-a5e3__grok-4-20,vision,20,,60,3,done,2026-04-26 18:10:45.413630,2026-04-26 18:30:32.784754

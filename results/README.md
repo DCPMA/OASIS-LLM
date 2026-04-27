@@ -6,9 +6,9 @@ Published runs of the OASIS-LLM harness. Each subdirectory is a self-contained r
 
 ## Index
 
-| Run | Cohort | Headline | Date |
-| --- | --- | --- | ---: |
-| [llm_vs_human_uniform40](llm_vs_human_uniform40/) | 5 frontier VLMs × 40 images × 20 samples (n=7,960) | LLMs match humans on valence (*r* ≈ 0.95); over-rate arousal by ~+0.36 on a 1–7 scale (*p* = 0.064 paired, *p* = 0.009 raw-trial) | 2026-04-26 |
+| Run                                               | Cohort                                             | Headline                                                                                                                          |       Date |
+| ------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------: |
+| [llm_vs_human_uniform40](llm_vs_human_uniform40/) | 5 frontier VLMs × 40 images × 20 samples (n=7,960) | LLMs match humans on valence (_r_ ≈ 0.95); over-rate arousal by ~+0.36 on a 1–7 scale (_p_ = 0.064 paired, _p_ = 0.009 raw-trial) | 2026-04-26 |
 
 ## Reading guide
 
