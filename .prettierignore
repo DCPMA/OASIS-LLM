@@ -6,3 +6,12 @@ site/docs/**/*.mdx
 site/docs/**/*.md
 results/**/*.md
 README.md
+CONTRIBUTORS.md
+
+# Prettier also re-indents YAML (2-space -> 4-space) and pads list brackets
+# in GitHub Actions workflows. Keep it off CI definitions.
+.github/**/*.yml
+.github/**/*.yaml
+
+# CITATION.cff is a YAML file with a strict schema; don't let Prettier touch it.
+CITATION.cff

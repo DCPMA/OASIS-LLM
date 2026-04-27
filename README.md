@@ -74,6 +74,10 @@ streamlit_app.py      # Streamlit Cloud entrypoint (full desktop dashboard)
 
 If you use this work in academic research, please cite both the harness and the underlying OASIS paper. See [`CITATION.cff`](CITATION.cff) — GitHub renders a "Cite this repository" button in the sidebar.
 
+## Contributors
+
+See [`CONTRIBUTORS.md`](CONTRIBUTORS.md) for the full author list with [CRediT](https://credit.niso.org/) roles. New contributors are welcome — instructions for getting added are in that file.
+
 ## License
 
 The code in this repository is released under the [MIT license](LICENSE). The OASIS image set retains its original [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) license and is **not** covered by the MIT terms.

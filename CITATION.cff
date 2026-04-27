@@ -9,8 +9,11 @@ abstract: >-
   valence and arousal dimensions and comparing the results to the
   human MTurk norms.
 authors:
+  - family-names: Koo
+    given-names: Lai Shuen
+    orcid: "https://orcid.org/0009-0004-9000-9427"
   - family-names: Wong
-    given-names: Desmond
+    alias: DCPMA
 repository-code: "https://github.com/DCPMA/OASIS-LLM"
 url: "https://github.com/DCPMA/OASIS-LLM"
 license: MIT

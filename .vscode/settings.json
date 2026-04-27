@@ -1,9 +1,22 @@
 {
+  "editor.formatOnSave": false,
   "[markdown]": {
     "editor.formatOnSave": false,
     "editor.defaultFormatter": null
   },
   "[mdx]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "[yaml]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "[json]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "[jsonc]": {
     "editor.formatOnSave": false,
     "editor.defaultFormatter": null
   }
