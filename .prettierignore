@@ -1,0 +1,8 @@
+# Prettier reformats markdown tables in .mdx files in ways that break them
+# (e.g. inserts pipe separators inside `|x − y|` cell contents, treating them
+# as column dividers). Markdown is hand-formatted in this project. Keep
+# Prettier off everything under site/docs/ and any top-level result READMEs.
+site/docs/**/*.mdx
+site/docs/**/*.md
+results/**/*.md
+README.md

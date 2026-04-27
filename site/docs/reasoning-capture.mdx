@@ -111,4 +111,6 @@ A trial reaches `status='failed'` only if all three fail (or the model returned 
   [Discrepancies](/discrepancies#4-rating-only-vs-rating-reasoning).
 </Warning>
 
-For exploratory work (which is most of what we do), `capture_reasoning: true` is worth it. The reasoning text is genuinely useful for spotting cases where the model is rating the _content_ differently than you'd expect — e.g. anthropomorphizing an alarm clock as "stressful" because it implies "waking up early".
+The original human OASIS protocol does **not** capture reasoning — the per-trial effort cost on MTurk is prohibitive. For LLMs, the trade is different: requesting a one-sentence rationale alongside the integer rating adds only a small constant cost in output tokens and runtime. The harness defaults to capturing it so the trace is available for spot-checking and qualitative analysis (e.g. detecting where the model is rating the *content* differently than you'd expect — anthropomorphizing an alarm clock as "stressful" because it implies "waking up early").
+
+During quantitative evaluation — every t-test, regression, and figure in [results/](https://github.com/DCPMA/OASIS-LLM/tree/main/results) — the reasoning text is **ignored**. Only the integer rating is consumed by the analysis pipeline. The reasoning column lives in the trial database and the published `raw/trials.csv` purely as audit material.

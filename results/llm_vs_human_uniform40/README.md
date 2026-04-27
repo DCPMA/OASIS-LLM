@@ -1,5 +1,9 @@
 # LLM vs Human Norms on OASIS — 40-image Pilot
 
+<p align="center">
+  <img src="plots/social_card.png" alt="OASIS-LLM uniform40 result: per-image scatter of pooled-LLM valence vs human valence (Pearson r ≈ 0.96, no detectable bias) and pooled-LLM arousal vs human arousal (mean diff +0.36, LLMs over-rate). 5 frontier VLMs, 40 images, 20 samples per pair, n = 7,960 trials." width="800"/>
+</p>
+
 > **First published OASIS-LLM result.** Five frontier vision-language models, 40 OASIS images, 20 samples per image-model pair, 7,960 trials total. Measures per-image agreement with the [Kurdi, Lozano, & Banaji (2017)](https://doi.org/10.3758/s13428-016-0715-3) MTurk human norms on **valence** and **arousal**.
 
 ## TL;DR

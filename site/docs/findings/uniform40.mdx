@@ -2,7 +2,12 @@
 title: "LLM vs Human · 40-image pilot"
 description: "First published OASIS-LLM result. Five frontier VLMs × 40 images × 20 samples = 7,960 trials. Valence matches; arousal is over-rated."
 icon: "flask"
+"og:image": "https://github.com/DCPMA/OASIS-LLM/raw/main/results/llm_vs_human_uniform40/plots/social_card.png"
+"twitter:image": "https://github.com/DCPMA/OASIS-LLM/raw/main/results/llm_vs_human_uniform40/plots/social_card.png"
+"twitter:card": "summary_large_image"
 ---
+
+<img src="https://github.com/DCPMA/OASIS-LLM/raw/main/results/llm_vs_human_uniform40/plots/social_card.png" alt="OASIS-LLM uniform40 result — valence matches, arousal is over-rated." />
 
 > **First published OASIS-LLM result.** Five frontier vision-language models, 40 OASIS images, 20 samples per image-model pair, 7,960 trials total. Measures per-image agreement with the [Kurdi, Lozano, & Banaji (2017)](https://doi.org/10.3758/s13428-016-0715-3) MTurk human norms on **valence** and **arousal**.
 >
@@ -10,8 +15,8 @@ icon: "flask"
 
 ## TL;DR
 
-- **Valence**: LLMs track humans tightly. Pearson *r* = 0.93–0.96 per model; pooled mean difference is −0.03 on a 1–7 scale (*p* = 0.79). **No detectable bias.**
-- **Arousal**: LLMs systematically rate images **higher** than humans. Pooled mean difference +0.36 (paired *p* = 0.064; raw-trial Welch *p* = 0.0087). Driven by Claude, GPT-5, and Grok; Gemma and Qwen are statistically indistinguishable from humans.
+- **Valence**: LLMs track humans tightly. Pearson _r_ = 0.93–0.96 per model; pooled mean difference is −0.03 on a 1–7 scale (_p_ = 0.79). **No detectable bias.**
+- **Arousal**: LLMs systematically rate images **higher** than humans. Pooled mean difference +0.36 (paired _p_ = 0.064; raw-trial Welch _p_ = 0.0087). Driven by Claude, GPT-5, and Grok; Gemma and Qwen are statistically indistinguishable from humans.
 - **Methodological implication**: a vision-language model can serve as a reasonable proxy for human valence ratings on naturalistic images, but its arousal ratings need calibration before use as a stand-in for human norms.
 
 ## Cohort
@@ -31,7 +36,7 @@ icon: "flask"
 
 ### Valence
 
-| Model                 | Mean diff |   *t*(39) |       *p* | Cohen's *d* | Pearson *r* |
+| Model                 | Mean diff |   _t_(39) |       _p_ | Cohen's _d_ | Pearson _r_ |
 | --------------------- | --------: | --------: | --------: | ----------: | ----------: |
 | claude-sonnet-4.6     |     −0.13 |     −1.08 |     0.286 |       −0.17 |        0.93 |
 | gemma-4-31b-it        |     −0.13 |     −1.13 |     0.265 |       −0.18 |        0.94 |
@@ -42,7 +47,7 @@ icon: "flask"
 
 ### Arousal
 
-| Model                 | Mean diff |  *t*(39) |        *p* | Cohen's *d* | Pearson *r* |
+| Model                 | Mean diff |  _t_(39) |        _p_ | Cohen's _d_ | Pearson _r_ |
 | --------------------- | --------: | -------: | ---------: | ----------: | ----------: |
 | claude-sonnet-4.6     | **+0.59** |     3.45 | **0.0014** |       +0.54 |        0.83 |
 | gemma-4-31b-it        |     +0.13 |     0.86 |      0.396 |       +0.14 |        0.79 |
@@ -55,7 +60,7 @@ Full per-model + Welch tables and per-image means: see [`results/llm_vs_human_un
 
 ## Choices made
 
-- **40 images, not 900.** Pilot scope. The *n* was informed by published image-rating reliability estimates: per-image means over ~20 raters give a small enough SE that 40 paired images have adequate power to detect |*d*| ≈ 0.4 at α = 0.05, (1−β) ≈ 0.8. Stratified across the 4 OASIS categories (10 each).
+- **40 images, not 900.** Pilot scope. The _n_ was informed by published image-rating reliability estimates: per-image means over ~20 raters give a small enough SE that 40 paired images have adequate power to detect |_d_| ≈ 0.4 at α = 0.05, (1−β) ≈ 0.8. Stratified across the 4 OASIS categories (10 each).
 - **20 samples per (image, model).** Matches the per-image n humans contribute in the published OASIS norms after exclusions.
 - **Five models, this combination.** Pilot scope. Cover frontier closed (Claude, GPT-5, Grok), open-weights frontier (Gemma 4 31B-IT), open-weights baseline (Qwen 3.6 Plus). One model per major lab, all routed through OpenRouter for parity.
 - **Valence and arousal in separate calls.** Mirrors the human MTurk between-subjects protocol; avoids order effects and within-call self-anchoring.

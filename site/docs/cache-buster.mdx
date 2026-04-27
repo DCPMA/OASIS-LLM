@@ -5,13 +5,18 @@ description: "Per-sample salts that force decoding-path divergence at temperatur
 
 ## The problem
 
-Many provider defaults — and many self-hosted vLLM/SGLang setups — use `temperature=0` (greedy decoding). Under greedy decoding, two API calls with identical inputs produce **identical outputs**. So `samples_per_image: 5` collapses to one rating repeated five times: zero variance information, five times the cost.
+When you call the same provider with identical inputs more than once, two things happen that quietly destroy your variance:
 
-You could set `temperature > 0` to get sampling-noise variance, but:
+1. **Provider-side caching.** Many gateways (OpenRouter, Anthropic, OpenAI structured-output paths, vLLM/SGLang prefix cache) recognise a repeated request and may return a cached completion verbatim. Two API calls with identical payloads can short-circuit to the same stored output — zero new compute, zero new variance.
+2. **Greedy decoding at `temperature=0`.** Even without a cache hit, identical inputs through a deterministic decode produce identical outputs.
 
-- That changes a real degree of freedom of the experiment.
-- Many open-weights models behave erratically at non-zero temperature on highly-structured tasks.
-- You lose comparability to deterministic baselines.
+Either way, `samples_per_image: 5` collapses to one rating repeated five times: zero variance information, five times the cost.
+
+The cache buster is the harness's tool for problem (1). Sample-time variance for problem (2) is handled by **temperature**, not by the cache buster, and the two are orthogonal.
+
+<Note>
+  Early development used `temperature=0`, which gave essentially zero variance even with the cache buster on — because the salt only perturbs the decoding path, and a confident greedy decode rounds the perturbation back to the same argmax (see [Limitations](#limitations)). The harness now defaults to **letting the provider apply its own default temperature** (e.g. OpenRouter passes the model's natural sampling defaults rather than overriding to 0), which is both more realistic and the only way to get sample-to-sample variance that resembles human between-rater spread. The cache buster stays on regardless, to ensure the request itself is not de-duplicated by the provider.
+</Note>
 
 ## The fix: per-sample salt
 
@@ -49,7 +54,9 @@ If we put the salt at the _start_ of the user turn or in the system message, pre
   The cache buster does not give you human-scale rating spread. It can't.
 </Warning>
 
-We empirically compared `cache_buster=false` (v1) and `cache_buster=true` (v2) on the same Gemma-4-31B smoke. The mean per-cell SD moved from roughly **0.10** to **0.07** rating points — and even those non-zero numbers come from occasional parsing edge cases, not from the salt itself. (The 5-model [uniform40 result](/findings/uniform40) used the published default of `cache_buster: true` at provider-default temperatures; per-cell SDs there are larger because temperature is non-zero, not because of the salt.)
+We empirically compared `cache_buster=false` (v1) and `cache_buster=true` (v2) on the same Gemma-4-31B smoke at `temperature=0`. The mean per-cell SD moved from roughly **0.10** to **0.07** rating points — and even those non-zero numbers come from occasional parsing edge cases, not from the salt itself.
+
+The cache buster is **one tool** for dealing with provider-side cache de-duplication; it is not the source of sample-to-sample variance in published runs. The 5-model [uniform40 result](/findings/uniform40) used `cache_buster: true` together with **provider-default temperatures** (read from OpenRouter, not pinned to 0). The non-trivial per-cell SDs in that result come from the temperature, not the salt; the salt is what guarantees the requests are not collapsed by the provider in the first place.
 
 The deeper issue is the **output space is too coarse**. The rating space is 7 integers. Two decoding paths that disagree about which integer is most likely will produce different ratings; two paths that agree on the argmax will produce identical ratings even if their full distributions differ. At `temperature=0` you only see the argmax. So:
 
