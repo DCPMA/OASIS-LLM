@@ -1,0 +1,35 @@
+---
+title: "Findings"
+description: "Published OASIS-LLM results. Each entry is a self-contained run with figures, statistics, and a checked-in raw trials CSV."
+icon: "chart-line"
+---
+
+The Findings tab indexes every published OASIS-LLM result. Each result is **immutable post-publication** — re-runs land as new entries with new dates rather than overwriting an existing one.
+
+For full evidence (trial-level CSVs, plot PNGs, setup configs), follow the link from each entry to the corresponding `results/<run>/` directory in the [GitHub repository](https://github.com/DCPMA/OASIS-LLM/tree/main/results).
+
+## Index
+
+<CardGroup cols={1}>
+  <Card title="LLM vs Human norms on OASIS — 40-image pilot" icon="flask" href="/findings/uniform40">
+    **2026-04-26 · 5 frontier VLMs · 40 images · 20 samples (n = 7,960)**
+
+    Valence ratings track human MTurk norms tightly (pooled Pearson *r* ≈ 0.96, no detectable bias). Arousal ratings are systematically inflated by ~+0.36 on a 1–7 scale (paired *p* = 0.064, raw-trial Welch *p* = 0.0087), driven by Claude, GPT-5, and Grok. Methodological implication: a frontier VLM is a reasonable stand-in for human valence on naturalistic images, but its arousal ratings need calibration.
+  </Card>
+</CardGroup>
+
+## Reading guide
+
+Each finding page follows the same structure:
+
+1. **TL;DR** — three sentences a busy reader can take away
+2. **Cohort** — what was tested
+3. **Headline figures** — a small number of plots that carry the inference
+4. **Numerical results** — t-test tables, descriptives
+5. **Choices made** — the design decisions specific to this run
+6. **Restrictions and caveats** — where the conclusions stop
+7. **Files & reproducing** — pointer to the GitHub directory and reproduction command
+
+## Contributing a finding
+
+The pipeline that produces a publishable run is documented in [Workflow](/workflow) and [Configuration](/configuration). Once a run completes, it is exported as a self-contained bundle (see [Workflow](/workflow)) and added to `results/` as a dated directory. A short summary page is then added here.

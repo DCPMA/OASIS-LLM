@@ -1,0 +1,40 @@
+---
+title: "Changelog"
+description: "User-visible changes to OASIS-LLM. New findings, methodology changes, and breaking harness changes."
+icon: "clock-rotate-left"
+---
+
+This page tracks **user-visible** changes — new published findings, methodology shifts, and breaking changes to the run harness or analysis pipeline. For the full commit history see the [GitHub repo](https://github.com/DCPMA/OASIS-LLM/commits/main).
+
+## 2026-04-27
+
+### Findings
+
+- **First published pilot result.** [LLM vs Human · 40-image pilot](/findings/uniform40) shipped to `results/llm_vs_human_uniform40/`. 5 frontier VLMs × 40 images × 20 samples = 7,960 trials. Headline: valence matches human MTurk norms (Pearson *r* ≈ 0.96, no detectable bias); arousal is over-rated by ~+0.36 on the 7-point scale (paired *p* = 0.064; raw-trial Welch *p* = 0.0087).
+- Result directory ships the trial-level CSV (`raw/trials.csv`, 8,000 rows with cost / latency / token provenance), per-model run configs (`setup/`), and 22 plot PNGs.
+
+### Docs
+
+- Restructured `docs.json` into Documentation / Findings tabs.
+- Renamed the `Discoveries` group to `Engineering notes` to clarify that those pages are implementation surprises, not findings about the world.
+- Added `Findings`, `Citing`, `Changelog` pages.
+- Fixed three broken / placeholder links in the docs (`https://github.com` stub, `/llm-vs-human-explorer` 404, `explorer.oasis-llm.org` placeholder navbar).
+- Quickstart expanded from a 10-line stub to a real install → dashboard → 100-trial pilot flow.
+
+## 2026-04-26 and earlier
+
+### Pre-publication
+
+- Repository made public at <https://github.com/DCPMA/OASIS-LLM>.
+- Mintlify v2 docs site stood up at <https://dcpma.mintlify.app>.
+- Bundle export/import system stabilised for sharing experiment results between machines.
+
+### Methodology
+
+- Cache-buster mechanism for forcing decoding variance at temperature = 0; see [Cache buster](/cache-buster).
+- Reasoning capture prompt-rewrite that fixed Gemma-4's required-schema regression; see [Reasoning capture](/reasoning-capture).
+- Two-tier cost capture (LiteLLM table → OpenRouter `usage.cost`); see [Cost & latency](/cost-latency).
+
+## How to add an entry
+
+When you ship a published finding or a breaking methodology change, add a dated section at the top of this page. Group entries under `### Findings`, `### Methodology`, or `### Docs` headings. Keep entries to 1–3 sentences each — link to the corresponding result or doc page for detail.

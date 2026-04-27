@@ -49,7 +49,7 @@ If we put the salt at the _start_ of the user turn or in the system message, pre
   The cache buster does not give you human-scale rating spread. It can't.
 </Warning>
 
-We empirically compared `cache_buster=false` (v1) and `cache_buster=true` (v2) on the same Gemma-4-31B pilot. The mean per-cell SD moved from roughly **0.10** to **0.07** rating points — and even those non-zero numbers come from occasional parsing edge cases, not from the salt itself.
+We empirically compared `cache_buster=false` (v1) and `cache_buster=true` (v2) on the same Gemma-4-31B smoke. The mean per-cell SD moved from roughly **0.10** to **0.07** rating points — and even those non-zero numbers come from occasional parsing edge cases, not from the salt itself. (The 5-model [uniform40 result](/findings/uniform40) used the published default of `cache_buster: true` at provider-default temperatures; per-cell SDs there are larger because temperature is non-zero, not because of the salt.)
 
 The deeper issue is the **output space is too coarse**. The rating space is 7 integers. Two decoding paths that disagree about which integer is most likely will produce different ratings; two paths that agree on the argmax will produce identical ratings even if their full distributions differ. At `temperature=0` you only see the argmax. So:
 

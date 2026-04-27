@@ -15,6 +15,7 @@ implementation pairs **calibrated token counts** (derived from
 n=10,598 historical trials) with **live OpenRouter pricing**, falling back
 to LiteLLM's static price table for non-OpenRouter providers and to "free"
 for Ollama. Day-1 estimates on a fresh machine are within ~10% of reality.
+The live numbers shipped with the [5-model uniform40 result](/findings/uniform40)’s `raw/trials.csv` are an additional data point against which the calibration can be re-checked.
 
 This page documents the two phases, the empirical data behind the
 calibration, and the design choices that fell out of validating the live

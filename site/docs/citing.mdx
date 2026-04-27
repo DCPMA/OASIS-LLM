@@ -1,0 +1,53 @@
+---
+title: "Citing OASIS-LLM"
+description: "How to cite the harness, the underlying OASIS image set, and individual published findings."
+icon: "quote-left"
+---
+
+If you use OASIS-LLM in academic work, please cite **both** the underlying OASIS paper (the source of the image set, the rating scale, and the human norms) and this harness. For specific findings, cite the published result page in addition.
+
+## 1. The OASIS image set & human norms
+
+> Kurdi, B., Lozano, S., & Banaji, M. R. (2017). Introducing the Open Affective Standardized Image Set (OASIS). *Behavior Research Methods*, *49*(2), 457–470. <https://doi.org/10.3758/s13428-016-0715-3>
+
+```bibtex
+@article{kurdi2017oasis,
+  author    = {Kurdi, Benedek and Lozano, Shayn and Banaji, Mahzarin R.},
+  title     = {Introducing the {Open Affective Standardized Image Set (OASIS)}},
+  journal   = {Behavior Research Methods},
+  year      = {2017},
+  volume    = {49},
+  number    = {2},
+  pages     = {457--470},
+  doi       = {10.3758/s13428-016-0715-3},
+}
+```
+
+## 2. The OASIS-LLM harness
+
+The repository ships a [`CITATION.cff`](https://github.com/DCPMA/OASIS-LLM/blob/main/CITATION.cff) file. GitHub renders a "Cite this repository" button in the sidebar that emits APA, BibTeX, and a few other formats.
+
+A typical BibTeX entry:
+
+```bibtex
+@software{oasis_llm,
+  title  = {{OASIS-LLM}: an LLM replication of the OASIS image-rating norms},
+  author = {Open Affective Standardized Image Set --- LLM contributors},
+  url    = {https://github.com/DCPMA/OASIS-LLM},
+  year   = {2026},
+}
+```
+
+Replace `year` with the year you accessed the repository, and pin the commit SHA in your methods section so the analysis is reproducible.
+
+## 3. A specific finding
+
+Each published result lives at `results/<run>/` in the repository and at `findings/<run>` in this docs site. To cite a specific result, name the result directory and the commit SHA at which you accessed it:
+
+> Pilot run *llm_vs_human_uniform40* (commit `400b49b`, 2026-04-26): five frontier vision-language models on 40 OASIS images, 7,960 trials. See <https://github.com/DCPMA/OASIS-LLM/tree/main/results/llm_vs_human_uniform40>.
+
+## License notes
+
+- The OASIS-LLM **code** is released under the [MIT license](https://github.com/DCPMA/OASIS-LLM/blob/main/LICENSE).
+- The OASIS **image set** retains its original [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) license. It is **not** covered by the MIT terms; redistribution and derivative works carry the share-alike obligation back to that license.
+- Numerical outputs in `results/` are derived from your own LLM API calls; the license on those is whatever your provider terms specify.

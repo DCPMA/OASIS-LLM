@@ -47,7 +47,7 @@
             "pages": ["workflow", "configuration"]
           },
           {
-            "group": "Discoveries",
+            "group": "Engineering notes",
             "pages": [
               "discoveries-methodology",
               "reasoning-capture",
@@ -59,7 +59,16 @@
           },
           {
             "group": "Reference",
-            "pages": ["glossary"]
+            "pages": ["glossary", "citing", "changelog"]
+          }
+        ]
+      },
+      {
+        "tab": "Findings",
+        "groups": [
+          {
+            "group": "Pilots",
+            "pages": ["findings/index", "findings/uniform40"]
           }
         ]
       }

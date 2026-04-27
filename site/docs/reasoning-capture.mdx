@@ -3,11 +3,11 @@ title: "Reasoning capture"
 description: "Why required-schema reasoning broke Gemma 4, and how the prompt-rewrite fix works."
 ---
 
-`capture_reasoning: true` (the default) asks the model for a `{rating, reasoning}` JSON object on every trial. This sounds trivial. Implementing it across providers without breaking smaller models was not.
+`capture_reasoning: true` (the default) asks the model for a `{rating, reasoning}` JSON object on every trial. This sounds trivial. Implementing it across providers without breaking smaller models was not. The fix described below is what the [5-model uniform40 result](/findings/uniform40) ran on — every published trial includes a one-sentence rationale alongside the integer rating.
 
 ## The Gemma 4 saga
 
-We tried three approaches before landing on the current one.
+This section describes the failure mode that motivated the current default. We tried three approaches before landing on it.
 
 <Steps>
   <Step title="Approach 1 — required-reasoning JSON schema (broken)">
