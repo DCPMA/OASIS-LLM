@@ -1,11 +1,13 @@
 ---
 title: "OASIS-LLM"
-description: "Replicate the OASIS image-rating norms (Kurdi, Lozano, & Banaji, 2017) with vision-language models instead of MTurk participants."
+description: "Emotional Reactivity in Multimodal Large Language Models: A Psychometric Benchmarking Study"
 ---
 
-OASIS-LLM is a small experimental harness that takes the **Open Affective Standardized Image Set (OASIS)** — a 900-image affective stimulus set normed by 822 MTurk workers on 7-point valence and arousal scales — and replays the rating procedure against modern vision-language models.
+# **Emotional Reactivity in Multimodal Large Language Models: A Psychometric Benchmarking Study**
 
-The goal is **methodological**: figure out what it takes to get behaviorally meaningful ratings out of an LLM (prompt fidelity, sampling variance, cost, reasoning capture) and how those ratings compare to the human norms.
+**Research question.** To what extent do multimodal LLM-generated valence and arousal ratings align with human normative ratings for validated emotion-eliciting visual stimuli from the Open Affective Standardized Image Set (OASIS)?
+
+The goal is **methodological and explorative**: Employing validated psychometrics and rigorous experimental design to examine whether multimodal large language models (LLMs) generate affective responses to visual stimuli that are structurally comparable to normative human data.
 
 <CardGroup cols={2}>
   <Card title="Latest result" icon="chart-line" href="https://github.com/DCPMA/OASIS-LLM/tree/main/results/llm_vs_human_uniform40">
@@ -42,15 +44,15 @@ The goal is **methodological**: figure out what it takes to get behaviorally mea
 
 ## What this project is
 
-- **A faithful re-implementation** of the OASIS rating procedure using paper-verbatim system prompts (image-centered instructions only, matching the main study).
+- **A pioneering and rigorous design** to examine LLMs pattern matching with emotion-eliciting materials.
 - **A reproducible run harness** built on DuckDB + LiteLLM + asyncio: configs are YAML, runs are idempotent, results are queryable.
 - **A discrepancy log.** We are explicit about where this replication diverges from the human protocol — see [Discrepancies](/discrepancies).
 
 ## What this project is **not**
 
-- Not a benchmark leaderboard. We do not publish model rankings.
-- Not a claim that LLMs feel valence or arousal. The ratings are model behavior; what they correspond to in the model is an open question.
-- Not yet validated. Reliability and validity vs. the human norms are still being characterized.
+- Not a leaderboard. We do not aim to publish model rankings.
+- Not a claim that LLMs experience any emotion. The ratings are model behaviour; what they correspond to in the model is an open question.
+- Not yet validated. Reliability and validity of the LLM performance vs. the human norms are still under analysis.
 
 <Note>
   Source paper: Kurdi, B., Lozano, S., &amp; Banaji, M. R. (2017). Introducing
